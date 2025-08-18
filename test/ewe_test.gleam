@@ -3,6 +3,8 @@ import ewe
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/erlang/process
+import gleam/http/request
+import gleam/httpc
 import gleam/int
 import gleeunit
 import glisten/socket
@@ -12,31 +14,22 @@ pub fn main() -> Nil {
   gleeunit.main()
 }
 
-pub fn slow_request_test() {
-  let assert Ok(_started) = ewe.start()
+pub fn with_tcp_sockets_test() {
+  let assert Ok(_started) = ewe.start(port: 42_069)
 
   run_chunked_request(
-    req: "GET / HTTP/1.1\r\nContent-Length: 13\r\nFoo:   Bar   \r\n\r\n",
-    chunks_amount: 10,
+    req: "GET / HTTP/1.1\r\nContent-Length: 0\r\nFoo:   Bar   \r\n\r\n",
+    chunks_amount: 3,
     wait: 100,
   )
-  // run_chunked_request(
-  //   req: "POST / HTTP/1.1\r\n\r\n",
-  //   chunks_amount: 1,
-  //   wait: 100,
-  // )
+}
 
-  // run_chunked_request(
-  //   req: "GEE / HTTP/1.1\r\n\r\n",
-  //   chunks_amount: 1,
-  //   wait: 100,
-  // )
+pub fn with_http_test() {
+  let assert Ok(_started) = ewe.start(port: 42_070)
 
-  // run_chunked_request(
-  //   req: "POST / HTTP/2.1\r\n\r\n",
-  //   chunks_amount: 1,
-  //   wait: 100,
-  // )
+  let assert Ok(req) = request.to("http://localhost:42070/hello/world")
+  let assert Ok(resp) = httpc.send(req)
+  echo resp
 }
 
 fn run_chunked_request(

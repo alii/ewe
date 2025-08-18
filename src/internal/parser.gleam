@@ -1,7 +1,11 @@
+// NOTE: ewww crime mess
+
 import gleam/bit_array
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/atom
+import gleam/int
+import gleam/option
 import gleam/result.{try}
 import gleam/string
 
@@ -46,11 +50,19 @@ pub type HttpVersion {
 }
 
 pub type ParsingState {
-  ParsingState(request: Request, stage: Stage)
+  ParsingState(
+    request: Request,
+    stage: Stage,
+    content_length: option.Option(Int),
+  )
 }
 
 pub fn new_state() -> ParsingState {
-  ParsingState(request: new_request(), stage: RequestLine)
+  ParsingState(
+    request: new_request(),
+    stage: RequestLine,
+    content_length: option.None,
+  )
 }
 
 pub type Request {
@@ -88,7 +100,7 @@ pub fn parse_request(
         ))
 
         let request = Request(method, target, version, dict.new(), <<>>)
-        let new_state = ParsingState(request, Headers)
+        let new_state = ParsingState(..state, request:, stage: Headers)
 
         Ok(#(new_state, remaining))
       }
@@ -103,8 +115,21 @@ pub fn parse_request(
         use #(headers, remaining) <- try(parse_header(buffer, dict.new()))
 
         let request = Request(..state.request, headers:)
-        let new_state = ParsingState(request, Body)
 
+        use content_length <- try(case dict.has_key(headers, "content-length") {
+          False -> Ok(option.None)
+          True -> {
+            let assert Ok(content_length) = dict.get(headers, "content-length")
+
+            use content_length <- try(
+              int.parse(content_length) |> result.replace_error(Invalid),
+            )
+
+            Ok(option.Some(content_length))
+          }
+        })
+
+        let new_state = ParsingState(request:, stage: Body, content_length:)
         Ok(#(new_state, remaining))
       }
 
@@ -114,8 +139,29 @@ pub fn parse_request(
       }
     }
     Body -> {
-      let new_state = ParsingState(state.request, Done)
-      parse_request(new_state, <<>>)
+      let parsed = {
+        case state.content_length {
+          option.None ->
+            Ok(#(ParsingState(state.request, Done, option.None), <<>>))
+          option.Some(content_length) -> {
+            case buffer {
+              <<body:bytes-size(content_length)>> -> {
+                let request = Request(..state.request, body:)
+                let new_state = ParsingState(request, Done, option.None)
+                Ok(#(new_state, <<>>))
+              }
+              <<_body:bytes-size(content_length), _rest:bits>> ->
+                todo as "handle possible trailers"
+              _ -> Error(Incomplete)
+            }
+          }
+        }
+      }
+
+      case parsed {
+        Ok(#(state, remaining)) -> parse_request(state, remaining)
+        Error(error) -> Error(#(state, buffer, error))
+      }
     }
     Done -> Ok(state.request)
   }
@@ -179,7 +225,8 @@ fn parse_header(
         bit_array.to_string(value) |> result.replace_error(Invalid),
       )
 
-      let headers = dict.insert(headers, name, string.trim(value))
+      let headers =
+        dict.insert(headers, string.lowercase(name), string.trim(value))
 
       parse_header(rest, headers)
     }

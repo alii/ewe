@@ -12,7 +12,7 @@ import internal/parser
 
 // NOTE: will be removed once we have a public API
 pub fn main() -> Nil {
-  let assert Ok(_) = start()
+  let assert Ok(_) = start(port: 42_069)
 
   process.sleep_forever()
 }
@@ -22,13 +22,12 @@ pub type State {
 }
 
 // No public API for now
-pub fn start() {
+pub fn start(port port: Int) {
   glisten.new(
     fn(_conn) { #(State(<<>>, parser.new_state()), None) },
     fn(state, msg, conn) {
       let assert glisten.Packet(msg) = msg
       let buffer = <<state.buffer:bits, msg:bits>>
-      echo buffer
 
       case parser.parse_request(state.parser, buffer) {
         Ok(request) -> {
@@ -37,12 +36,12 @@ pub fn start() {
             <<"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!">>
             |> bytes_tree.from_bit_array
             |> glisten.send(conn, _)
-            |> echo
+          // |> echo
 
           glisten.stop()
         }
         Error(#(parser, buffer, error)) -> {
-          echo #(buffer, error) as "error"
+          // echo #(buffer, error) as "error"
 
           case error {
             parser.Incomplete -> {
@@ -54,19 +53,8 @@ pub fn start() {
           }
         }
       }
-      // NOTE: parsing received messages from buffer, if it's ewww then
-      // continue until we have a full message ??? Else, we will put the
-      // parsed request as argument of handler.
-
-      // And theeeen we can figure out what to do next
-
-      // hard coded response for now
-      // let _ =
-      //   "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!"
-      //   |> bytes_tree.from_string
-      //   |> glisten.send(conn, _)
     },
   )
   |> glisten.bind("0.0.0.0")
-  |> glisten.start(42_069)
+  |> glisten.start(port)
 }
