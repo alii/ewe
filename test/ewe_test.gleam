@@ -12,32 +12,31 @@ pub fn main() -> Nil {
   gleeunit.main()
 }
 
-// NOTE: temporary while exploring glisten capabilities
 pub fn slow_request_test() {
   let assert Ok(_started) = ewe.start()
 
   run_chunked_request(
-    req: "GET / HTTP/1.1\r\nContent-Length: 13\r\nFoo:   Bar   \r\n\r\nHello, world!",
-    chunks_amount: 1,
+    req: "GET / HTTP/1.1\r\nContent-Length: 13\r\nFoo:   Bar   \r\n\r\n",
+    chunks_amount: 10,
     wait: 100,
   )
-  run_chunked_request(
-    req: "POST / HTTP/1.1\r\n\r\n",
-    chunks_amount: 1,
-    wait: 100,
-  )
+  // run_chunked_request(
+  //   req: "POST / HTTP/1.1\r\n\r\n",
+  //   chunks_amount: 1,
+  //   wait: 100,
+  // )
 
-  run_chunked_request(
-    req: "GEE / HTTP/1.1\r\n\r\n",
-    chunks_amount: 1,
-    wait: 100,
-  )
+  // run_chunked_request(
+  //   req: "GEE / HTTP/1.1\r\n\r\n",
+  //   chunks_amount: 1,
+  //   wait: 100,
+  // )
 
-  run_chunked_request(
-    req: "POST / HTTP/2.1\r\n\r\n",
-    chunks_amount: 1,
-    wait: 100,
-  )
+  // run_chunked_request(
+  //   req: "POST / HTTP/2.1\r\n\r\n",
+  //   chunks_amount: 1,
+  //   wait: 100,
+  // )
 }
 
 fn run_chunked_request(

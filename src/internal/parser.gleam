@@ -28,112 +28,137 @@ pub type Method {
   Head
 }
 
-pub fn parse_method(method: String) -> Result(Method, ParseError) {
+pub fn parse_method(method: BitArray) -> Result(Method, ParseError) {
   case method {
-    "GET" -> Ok(Get)
-    "POST" -> Ok(Post)
-    "PUT" -> Ok(Put)
-    "DELETE" -> Ok(Delete)
-    "PATCH" -> Ok(Patch)
-    "OPTIONS" -> Ok(Options)
-    "HEAD" -> Ok(Head)
+    <<"GET">> -> Ok(Get)
+    <<"POST">> -> Ok(Post)
+    <<"PUT">> -> Ok(Put)
+    <<"DELETE">> -> Ok(Delete)
+    <<"PATCH">> -> Ok(Patch)
+    <<"OPTIONS">> -> Ok(Options)
+    <<"HEAD">> -> Ok(Head)
     _ -> Error(Invalid)
   }
-}
-
-pub type ParsingState {
-  ParsingState(request: Request, stage: Stage, buffer: BitArray)
 }
 
 pub type HttpVersion {
   Http11
 }
 
+pub type ParsingState {
+  ParsingState(request: Request, stage: Stage)
+}
+
+pub fn new_state() -> ParsingState {
+  ParsingState(request: new_request(), stage: RequestLine)
+}
+
 pub type Request {
-  Request(method: Method, target: String, version: HttpVersion)
+  Request(
+    method: Method,
+    target: String,
+    version: HttpVersion,
+    headers: Dict(String, String),
+    body: BitArray,
+  )
 }
 
 pub fn new_request() -> Request {
-  Request(method: Get, target: "/", version: Http11)
+  Request(
+    method: Get,
+    target: "/",
+    version: Http11,
+    headers: dict.new(),
+    body: <<>>,
+  )
 }
+
+pub type Parsed(value) =
+  Result(#(value, BitArray), ParseError)
 
 pub fn parse_request(
   state: ParsingState,
-) -> #(ParsingState, Result(Nil, ParseError)) {
+  buffer: BitArray,
+) -> Result(Request, #(ParsingState, BitArray, ParseError)) {
   case state.stage {
     RequestLine -> {
       let parsed = {
-        use #(request_line, rest) <- try(
-          case split(state.buffer, <<"\r\n">>, []) {
-            [request_line, rest] -> Ok(#(request_line, rest))
-            _ -> Error(Incomplete)
-          },
-        )
+        use #(#(method, target, version), remaining) <- try(parse_request_line(
+          buffer,
+        ))
 
-        use #(method, target, version) <- try(parse_request_line(request_line))
+        let request = Request(method, target, version, dict.new(), <<>>)
+        let new_state = ParsingState(request, Headers)
 
-        let request = Request(method, target, version)
-
-        let new_state = ParsingState(request, Headers, rest)
-
-        Ok(new_state)
+        Ok(#(new_state, remaining))
       }
 
       case parsed {
-        Ok(new_state) -> parse_request(new_state)
-        Error(error) -> #(state, Error(error))
+        Ok(#(state, remaining)) -> parse_request(state, remaining)
+        Error(error) -> Error(#(state, buffer, error))
       }
     }
     Headers -> {
-      echo "parsing headers next!"
-      let headers = parse_header(state.buffer, dict.new())
+      let parsed = {
+        use #(headers, remaining) <- try(parse_header(buffer, dict.new()))
 
-      echo headers as "headers"
+        let request = Request(..state.request, headers:)
+        let new_state = ParsingState(request, Body)
 
-      #(state, Ok(Nil))
+        Ok(#(new_state, remaining))
+      }
+
+      case parsed {
+        Ok(#(state, remaining)) -> parse_request(state, remaining)
+        Error(error) -> Error(#(state, buffer, error))
+      }
     }
-    _ -> todo
+    Body -> {
+      let new_state = ParsingState(state.request, Done)
+      parse_request(new_state, <<>>)
+    }
+    Done -> Ok(state.request)
   }
 }
 
-fn parse_request_line(buffer: BitArray) {
-  use #(method, rest) <- try(case split(buffer, <<" ">>, []) {
-    [method, rest] -> Ok(#(method, rest))
+fn parse_request_line(
+  buffer: BitArray,
+) -> Parsed(#(Method, String, HttpVersion)) {
+  use #(request_line, remaining) <- try(case split(buffer, <<"\r\n">>, []) {
+    [request_line, remaining] -> Ok(#(request_line, remaining))
     _ -> Error(Incomplete)
   })
 
-  use method <- try(
-    bit_array.to_string(method) |> result.replace_error(Invalid),
+  use #(method, target, version) <- try(
+    case split(request_line, <<" ">>, [atom.create("global")]) {
+      [method, target, version] -> Ok(#(method, target, version))
+      _ -> Error(Invalid)
+    },
   )
 
-  use method <- try(parse_method(method) |> result.replace_error(Invalid))
+  use method <- try(parse_method(method))
 
-  use #(target, version) <- try(case split(rest, <<" ">>, []) {
-    [target, rest] -> Ok(#(target, rest))
-    _ -> Error(Incomplete)
-  })
-
+  // TODO: parse target
   use target <- try(
     bit_array.to_string(target) |> result.replace_error(Invalid),
   )
 
-  use _ <- try(case split(version, <<" ">>, []) {
-    [_] -> Ok(Nil)
+  use version <- try(case version {
+    <<"HTTP/1.1">> -> Ok(Http11)
+    <<"HTTP/", _:bytes>> -> Error(UnsupportedVersion)
     _ -> Error(Invalid)
   })
 
-  use version <- try(case version {
-    <<"HTTP/1.1">> -> Ok(Http11)
-    _ -> Error(UnsupportedVersion)
-  })
-
-  Ok(#(method, target, version))
+  Ok(#(#(method, target, version), remaining))
 }
 
-fn parse_header(buffer: BitArray, headers: Dict(String, String)) {
-  case bit_array.starts_with(buffer, <<"\r\n">>) {
-    True -> Ok(headers)
-    False -> {
+fn parse_header(
+  buffer: BitArray,
+  headers: Dict(String, String),
+) -> Parsed(Dict(String, String)) {
+  case buffer {
+    <<"\r\n", rest:bits>> -> Ok(#(headers, rest))
+    _ -> {
       use #(header, rest) <- try(case split(buffer, <<"\r\n">>, []) {
         [header, rest] -> Ok(#(header, rest))
         _ -> Error(Incomplete)

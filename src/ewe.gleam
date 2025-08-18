@@ -18,46 +18,35 @@ pub fn main() -> Nil {
 }
 
 pub type State {
-  State(state: parser.ParsingState)
+  State(buffer: BitArray, parser: parser.ParsingState)
 }
 
 // No public API for now
 pub fn start() {
   glisten.new(
-    fn(_conn) {
-      #(
-        parser.ParsingState(
-          request: parser.new_request(),
-          stage: parser.RequestLine,
-          buffer: <<>>,
-        ),
-        None,
-      )
-    },
+    fn(_conn) { #(State(<<>>, parser.new_state()), None) },
     fn(state, msg, conn) {
       let assert glisten.Packet(msg) = msg
+      let buffer = <<state.buffer:bits, msg:bits>>
+      echo buffer
 
-      let current = <<state.buffer:bits, msg:bits>>
-      echo current as "buffer"
-
-      let new_state = parser.ParsingState(..state, buffer: current)
-      let #(new_state, result) = parser.parse_request(new_state)
-
-      case result {
-        Ok(Nil) -> {
+      case parser.parse_request(state.parser, buffer) {
+        Ok(request) -> {
+          echo request as "request parsed!"
           let _ =
-            "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!"
-            |> bytes_tree.from_string
+            <<"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!">>
+            |> bytes_tree.from_bit_array
             |> glisten.send(conn, _)
+            |> echo
 
-          glisten.continue(new_state)
+          glisten.stop()
         }
-        Error(error) -> {
-          echo error as "error"
+        Error(#(parser, buffer, error)) -> {
+          echo #(buffer, error) as "error"
 
           case error {
             parser.Incomplete -> {
-              glisten.continue(new_state)
+              glisten.continue(State(buffer:, parser:))
             }
             _ -> {
               glisten.stop()
