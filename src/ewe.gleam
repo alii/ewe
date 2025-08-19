@@ -28,6 +28,7 @@ pub fn start(port port: Int) {
     fn(state, msg, conn) {
       let assert glisten.Packet(msg) = msg
       let buffer = <<state.buffer:bits, msg:bits>>
+      echo buffer as "buffer"
 
       case parser.parse_request(state.parser, buffer) {
         Ok(request) -> {

@@ -5,7 +5,7 @@ import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/atom
 import gleam/int
-import gleam/option
+import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
 import gleam/string
 import gleam/uri
@@ -23,7 +23,9 @@ pub type ParseError {
 pub type Stage {
   Begin
   Headers
+  // TODO: chunked body
   Body(content_length: Int)
+  BodyChunked(chunk_size: Option(Int))
   Done
 }
 
@@ -55,36 +57,39 @@ pub type HttpVersion {
 }
 
 pub type ParsingState {
-  ParsingState(parsed: option.Option(Parsed), stage: Stage)
+  ParsingState(parsed: Option(Request), stage: Stage)
 }
 
 pub fn new_state() -> ParsingState {
-  ParsingState(parsed: option.None, stage: Begin)
+  ParsingState(parsed: None, stage: Begin)
 }
 
-pub type Parsed {
-  Parsed(
+pub type Request {
+  Request(
     request_line: RequestLine,
     headers: Dict(String, String),
     body: BitArray,
   )
 }
 
+pub type Parsed(value) {
+  Parsed(value, remaining: BitArray)
+}
+
 pub type Parsing(value) =
-  Result(#(value, BitArray), ParseError)
+  Result(Parsed(value), ParseError)
 
 pub fn parse_request(
   state: ParsingState,
   buffer: BitArray,
-) -> Result(Parsed, #(ParsingState, BitArray, ParseError)) {
+) -> Result(Request, #(ParsingState, BitArray, ParseError)) {
   case state.stage {
     Begin -> {
       let parsed = {
-        use #(request_line, remaining) <- try(parse_request_line(buffer))
+        use Parsed(request_line, remaining) <- try(parse_request_line(buffer))
 
-        let parsed = Parsed(request_line:, headers: dict.new(), body: <<>>)
-        let new_state =
-          ParsingState(parsed: option.Some(parsed), stage: Headers)
+        let parsed = Request(request_line:, headers: dict.new(), body: <<>>)
+        let new_state = ParsingState(parsed: Some(parsed), stage: Headers)
 
         Ok(#(new_state, remaining))
       }
@@ -96,13 +101,13 @@ pub fn parse_request(
     }
     Headers -> {
       let parsed = {
-        use #(headers, remaining) <- try(parse_header(buffer, dict.new()))
+        use Parsed(headers, remaining) <- try(parse_header(buffer, dict.new()))
 
         // TODO: Parse host maybe?
         use <- bool.guard(!dict.has_key(headers, "host"), Error(HostMissing))
 
         use content_length <- try(case dict.has_key(headers, "content-length") {
-          False -> Ok(option.None)
+          False -> Ok(None)
           True -> {
             let assert Ok(content_length) = dict.get(headers, "content-length")
 
@@ -110,16 +115,25 @@ pub fn parse_request(
               int.parse(content_length) |> result.replace_error(Invalid),
             )
 
-            Ok(option.Some(content_length))
+            Ok(Some(content_length))
+          }
+        })
+
+        use chunked <- try(case dict.has_key(headers, "transfer-encoding") {
+          False -> Ok(None)
+          True -> {
+            let assert Ok(chunked) = dict.get(headers, "transfer-encoding")
+            Ok(Some(chunked == "chunked"))
           }
         })
 
         let parsed =
-          option.map(state.parsed, fn(parsed) { Parsed(..parsed, headers:) })
+          option.map(state.parsed, fn(parsed) { Request(..parsed, headers:) })
 
-        let stage = case content_length {
-          option.None -> Done
-          option.Some(content_length) -> Body(content_length:)
+        let stage = case chunked, content_length {
+          Some(True), _ -> BodyChunked(None)
+          _, Some(content_length) -> Body(content_length:)
+          _, _ -> Done
         }
 
         let new_state = ParsingState(parsed:, stage:)
@@ -134,14 +148,14 @@ pub fn parse_request(
     Body(content_length) -> {
       let parsed = {
         case buffer {
-          <<body:bytes-size(content_length)>>
-          | <<body:bytes-size(content_length), _rest:bits>> -> {
+          <<body:bytes-size(content_length)>> -> {
             let parsed =
-              option.map(state.parsed, fn(parsed) { Parsed(..parsed, body:) })
+              option.map(state.parsed, fn(parsed) { Request(..parsed, body:) })
 
             let new_state = ParsingState(parsed:, stage: Done)
             Ok(#(new_state, <<>>))
           }
+          <<_:bytes-size(content_length), _>> -> Error(Invalid)
           _ -> Error(Incomplete)
         }
       }
@@ -149,6 +163,11 @@ pub fn parse_request(
       case parsed {
         Ok(#(state, remaining)) -> parse_request(state, remaining)
         Error(error) -> Error(#(state, buffer, error))
+      }
+    }
+    BodyChunked(chunk_size) -> {
+      let parsed = {
+        parse_chunked_body(buffer, chunk_size)
       }
     }
     Done -> {
@@ -190,9 +209,9 @@ fn parse_request_line(buffer: BitArray) -> Parsing(RequestLine) {
     _ -> Error(Invalid)
   })
 
-  let parsed = RequestLine(method, target, version)
-
-  Ok(#(parsed, remaining))
+  RequestLine(method, target, version)
+  |> Parsed(remaining)
+  |> Ok
 }
 
 pub fn parse_header(
@@ -202,7 +221,7 @@ pub fn parse_header(
   // TODO: handle not combinable headers
 
   case buffer {
-    <<"\r\n", rest:bits>> -> Ok(#(headers, rest))
+    <<"\r\n", rest:bits>> -> Ok(Parsed(headers, rest))
     <<"\t", _rest:bits>> | <<" ", _rest:bits>> ->
       Error(MultiLineHeaderUnsupported)
     _ -> {
@@ -241,6 +260,10 @@ pub fn parse_header(
       parse_header(rest, headers)
     }
   }
+}
+
+pub fn parse_chunked_body(buffer: BitArray, chunk_size: Option(Int)) {
+  todo
 }
 
 @external(erlang, "binary", "split")

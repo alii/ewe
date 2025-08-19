@@ -24,17 +24,17 @@ pub fn simple_headers_parsing_test() {
     <<"foo: bar\r\n\tbaz\r\n\r\n">>
     |> parser.parse_header(dict.new())
 
-  let assert Ok(#(headers, _)) =
+  let assert Ok(parser.Parsed(headers, _)) =
     <<"foo:   bar       \r\n\r\n">>
     |> parser.parse_header(dict.new())
   assert dict.to_list(headers) == [#("foo", "bar")]
 
-  let assert Ok(#(headers, _)) =
+  let assert Ok(parser.Parsed(headers, _)) =
     <<"foo: bar\r\nContent-Length: 13\r\n\r\n">>
     |> parser.parse_header(dict.new())
   assert dict.to_list(headers) == [#("content-length", "13"), #("foo", "bar")]
 
-  let assert Ok(#(headers, _)) =
+  let assert Ok(parser.Parsed(headers, _)) =
     <<"foo: bar\r\nfoo: baz\r\ncontent-length: 13\r\n\r\n">>
     |> parser.parse_header(dict.new())
   assert dict.to_list(headers)
