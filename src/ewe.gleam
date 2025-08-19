@@ -32,16 +32,21 @@ pub fn start(port port: Int) {
       case parser.parse_request(state.parser, buffer) {
         Ok(request) -> {
           echo request as "request parsed!"
+
+          let response = <<
+            "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!",
+          >>
+
           let _ =
-            <<"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!">>
+            response
             |> bytes_tree.from_bit_array
             |> glisten.send(conn, _)
           // |> echo
 
-          glisten.stop()
+          glisten.continue(State(<<>>, parser.new_state()))
         }
         Error(#(parser, buffer, error)) -> {
-          // echo #(buffer, error) as "error"
+          echo #(buffer, error) as "ERROR!"
 
           case error {
             parser.Incomplete -> {

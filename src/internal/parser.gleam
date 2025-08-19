@@ -8,17 +8,22 @@ import gleam/int
 import gleam/option
 import gleam/result.{try}
 import gleam/string
+import gleam/uri
 
 pub type ParseError {
   Incomplete
   Invalid
+
   UnsupportedVersion
+
+  HostMissing
+  MultiLineHeaderUnsupported
 }
 
 pub type Stage {
-  RequestLine
+  Begin
   Headers
-  Body
+  Body(content_length: Int)
   Done
 }
 
@@ -50,57 +55,36 @@ pub type HttpVersion {
 }
 
 pub type ParsingState {
-  ParsingState(
-    request: Request,
-    stage: Stage,
-    content_length: option.Option(Int),
-  )
+  ParsingState(parsed: option.Option(Parsed), stage: Stage)
 }
 
 pub fn new_state() -> ParsingState {
-  ParsingState(
-    request: new_request(),
-    stage: RequestLine,
-    content_length: option.None,
-  )
+  ParsingState(parsed: option.None, stage: Begin)
 }
 
-pub type Request {
-  Request(
-    method: Method,
-    target: String,
-    version: HttpVersion,
+pub type Parsed {
+  Parsed(
+    request_line: RequestLine,
     headers: Dict(String, String),
     body: BitArray,
   )
 }
 
-pub fn new_request() -> Request {
-  Request(
-    method: Get,
-    target: "/",
-    version: Http11,
-    headers: dict.new(),
-    body: <<>>,
-  )
-}
-
-pub type Parsed(value) =
+pub type Parsing(value) =
   Result(#(value, BitArray), ParseError)
 
 pub fn parse_request(
   state: ParsingState,
   buffer: BitArray,
-) -> Result(Request, #(ParsingState, BitArray, ParseError)) {
+) -> Result(Parsed, #(ParsingState, BitArray, ParseError)) {
   case state.stage {
-    RequestLine -> {
+    Begin -> {
       let parsed = {
-        use #(#(method, target, version), remaining) <- try(parse_request_line(
-          buffer,
-        ))
+        use #(request_line, remaining) <- try(parse_request_line(buffer))
 
-        let request = Request(method, target, version, dict.new(), <<>>)
-        let new_state = ParsingState(..state, request:, stage: Headers)
+        let parsed = Parsed(request_line:, headers: dict.new(), body: <<>>)
+        let new_state =
+          ParsingState(parsed: option.Some(parsed), stage: Headers)
 
         Ok(#(new_state, remaining))
       }
@@ -114,7 +98,8 @@ pub fn parse_request(
       let parsed = {
         use #(headers, remaining) <- try(parse_header(buffer, dict.new()))
 
-        let request = Request(..state.request, headers:)
+        // TODO: Parse host maybe?
+        use <- bool.guard(!dict.has_key(headers, "host"), Error(HostMissing))
 
         use content_length <- try(case dict.has_key(headers, "content-length") {
           False -> Ok(option.None)
@@ -129,7 +114,15 @@ pub fn parse_request(
           }
         })
 
-        let new_state = ParsingState(request:, stage: Body, content_length:)
+        let parsed =
+          option.map(state.parsed, fn(parsed) { Parsed(..parsed, headers:) })
+
+        let stage = case content_length {
+          option.None -> Done
+          option.Some(content_length) -> Body(content_length:)
+        }
+
+        let new_state = ParsingState(parsed:, stage:)
         Ok(#(new_state, remaining))
       }
 
@@ -138,23 +131,18 @@ pub fn parse_request(
         Error(error) -> Error(#(state, buffer, error))
       }
     }
-    Body -> {
+    Body(content_length) -> {
       let parsed = {
-        case state.content_length {
-          option.None ->
-            Ok(#(ParsingState(state.request, Done, option.None), <<>>))
-          option.Some(content_length) -> {
-            case buffer {
-              <<body:bytes-size(content_length)>> -> {
-                let request = Request(..state.request, body:)
-                let new_state = ParsingState(request, Done, option.None)
-                Ok(#(new_state, <<>>))
-              }
-              <<_body:bytes-size(content_length), _rest:bits>> ->
-                todo as "handle possible trailers"
-              _ -> Error(Incomplete)
-            }
+        case buffer {
+          <<body:bytes-size(content_length)>>
+          | <<body:bytes-size(content_length), _rest:bits>> -> {
+            let parsed =
+              option.map(state.parsed, fn(parsed) { Parsed(..parsed, body:) })
+
+            let new_state = ParsingState(parsed:, stage: Done)
+            Ok(#(new_state, <<>>))
           }
+          _ -> Error(Incomplete)
         }
       }
 
@@ -163,13 +151,18 @@ pub fn parse_request(
         Error(error) -> Error(#(state, buffer, error))
       }
     }
-    Done -> Ok(state.request)
+    Done -> {
+      let assert option.Some(parsed) = state.parsed
+      Ok(parsed)
+    }
   }
 }
 
-fn parse_request_line(
-  buffer: BitArray,
-) -> Parsed(#(Method, String, HttpVersion)) {
+pub type RequestLine {
+  RequestLine(method: Method, uri: uri.Uri, version: HttpVersion)
+}
+
+fn parse_request_line(buffer: BitArray) -> Parsing(RequestLine) {
   use #(request_line, remaining) <- try(case split(buffer, <<"\r\n">>, []) {
     [request_line, remaining] -> Ok(#(request_line, remaining))
     _ -> Error(Incomplete)
@@ -184,9 +177,11 @@ fn parse_request_line(
 
   use method <- try(parse_method(method))
 
-  // TODO: parse target
-  use target <- try(
-    bit_array.to_string(target) |> result.replace_error(Invalid),
+  use target <- result.try(
+    bit_array.to_string(target)
+    |> result.map(uri.parse)
+    |> result.flatten()
+    |> result.replace_error(Invalid),
   )
 
   use version <- try(case version {
@@ -195,38 +190,53 @@ fn parse_request_line(
     _ -> Error(Invalid)
   })
 
-  Ok(#(#(method, target, version), remaining))
+  let parsed = RequestLine(method, target, version)
+
+  Ok(#(parsed, remaining))
 }
 
-fn parse_header(
+pub fn parse_header(
   buffer: BitArray,
   headers: Dict(String, String),
-) -> Parsed(Dict(String, String)) {
+) -> Parsing(Dict(String, String)) {
+  // TODO: handle not combinable headers
+
   case buffer {
     <<"\r\n", rest:bits>> -> Ok(#(headers, rest))
+    <<"\t", _rest:bits>> | <<" ", _rest:bits>> ->
+      Error(MultiLineHeaderUnsupported)
     _ -> {
       use #(header, rest) <- try(case split(buffer, <<"\r\n">>, []) {
         [header, rest] -> Ok(#(header, rest))
         _ -> Error(Incomplete)
       })
 
-      use #(name, value) <- try(case split(header, <<": ">>, []) {
+      use #(name, value) <- try(case split(header, <<":">>, []) {
         [name, value] -> Ok(#(name, value))
         _ -> Error(Invalid)
       })
 
       use name <- try(
-        bit_array.to_string(name) |> result.replace_error(Invalid),
+        bit_array.to_string(name)
+        |> result.map(string.lowercase)
+        |> result.replace_error(Invalid),
       )
 
       use <- bool.guard(string.contains(name, " "), Error(Invalid))
 
       use value <- try(
-        bit_array.to_string(value) |> result.replace_error(Invalid),
+        bit_array.to_string(value)
+        |> result.map(string.trim)
+        |> result.replace_error(Invalid),
       )
 
       let headers =
-        dict.insert(headers, string.lowercase(name), string.trim(value))
+        dict.upsert(headers, name, fn(exists) {
+          case exists {
+            option.Some(acc) -> acc <> ", " <> value
+            option.None -> value
+          }
+        })
 
       parse_header(rest, headers)
     }
