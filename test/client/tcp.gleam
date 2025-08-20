@@ -22,6 +22,8 @@ pub fn with_socket(
   callback(socket)
 
   let assert Ok(Nil) = tcp.close(socket)
+
+  Nil
 }
 
 @external(erlang, "gen_tcp", "connect")

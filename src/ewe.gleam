@@ -28,11 +28,10 @@ pub fn start(port port: Int) {
     fn(state, msg, conn) {
       let assert glisten.Packet(msg) = msg
       let buffer = <<state.buffer:bits, msg:bits>>
-      echo buffer as "buffer"
 
       case parser.parse_request(state.parser, buffer) {
         Ok(request) -> {
-          echo request as "request parsed!"
+          parser.pretty_print_parsed(request)
 
           let response = <<
             "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!",
@@ -47,11 +46,15 @@ pub fn start(port port: Int) {
           glisten.continue(State(<<>>, parser.new_state()))
         }
         Error(#(parser, buffer, error)) -> {
-          echo #(buffer, error) as "ERROR!"
+          // echo #(buffer, error) as "ERROR!"
 
           case error {
             parser.Incomplete -> {
               glisten.continue(State(buffer:, parser:))
+            }
+            parser.Invalid -> {
+              echo "invalid request" as "ERROR!"
+              glisten.stop()
             }
             _ -> {
               glisten.stop()

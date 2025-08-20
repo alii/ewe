@@ -5,6 +5,7 @@ import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/atom
 import gleam/int
+import gleam/io
 import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
 import gleam/string
@@ -25,7 +26,7 @@ pub type Stage {
   Headers
   // TODO: chunked body
   Body(content_length: Int)
-  BodyChunked(chunk_size: Option(Int))
+  BodyChunked(chunk_size: Option(Int), parsed: BitArray)
   Done
 }
 
@@ -69,6 +70,24 @@ pub type Request {
     request_line: RequestLine,
     headers: Dict(String, String),
     body: BitArray,
+  )
+}
+
+pub fn pretty_print_parsed(parsed: Request) {
+  io.println("\n================================================")
+  io.println("Request:")
+  io.println("Method: " <> { parsed.request_line.method |> string.inspect })
+  io.println("URI: " <> { parsed.request_line.uri |> string.inspect })
+  io.println("Version: " <> { parsed.request_line.version |> string.inspect })
+  io.println("Headers:")
+  dict.each(parsed.headers, fn(key, value) {
+    io.println(
+      "  " <> { key |> string.inspect } <> ": " <> { value |> string.inspect },
+    )
+  })
+  io.println("Body:")
+  io.println(
+    "  " <> { parsed.body |> bit_array.to_string |> result.unwrap("") },
   )
 }
 
@@ -131,7 +150,7 @@ pub fn parse_request(
           option.map(state.parsed, fn(parsed) { Request(..parsed, headers:) })
 
         let stage = case chunked, content_length {
-          Some(True), _ -> BodyChunked(None)
+          Some(True), _ -> BodyChunked(chunk_size: None, parsed: <<>>)
           _, Some(content_length) -> Body(content_length:)
           _, _ -> Done
         }
@@ -165,9 +184,21 @@ pub fn parse_request(
         Error(error) -> Error(#(state, buffer, error))
       }
     }
-    BodyChunked(chunk_size) -> {
-      let parsed = {
-        parse_chunked_body(buffer, chunk_size)
+    BodyChunked(chunk_size, parsed) -> {
+      case parse_chunked_body(buffer, chunk_size, parsed) {
+        Ok(ChunkedBody(_, body, <<>>)) -> {
+          let parsed =
+            option.map(state.parsed, fn(parsed) { Request(..parsed, body:) })
+
+          let new_state = ParsingState(parsed:, stage: Done)
+          parse_request(new_state, <<>>)
+        }
+        Ok(ChunkedBody(_, body, remaining)) -> todo
+        Error(#(ChunkedBody(chunk_size:, parsed:, remaining:), error)) -> {
+          let new_state =
+            ParsingState(..state, stage: BodyChunked(chunk_size:, parsed:))
+          Error(#(new_state, remaining, error))
+        }
       }
     }
     Done -> {
@@ -262,8 +293,65 @@ pub fn parse_header(
   }
 }
 
-pub fn parse_chunked_body(buffer: BitArray, chunk_size: Option(Int)) {
-  todo
+pub type ChunkedBody {
+  ChunkedBody(chunk_size: Option(Int), parsed: BitArray, remaining: BitArray)
+}
+
+fn parse_chunked_body(
+  buffer: BitArray,
+  chunk_size: Option(Int),
+  parsed: BitArray,
+) -> Result(ChunkedBody, #(ChunkedBody, ParseError)) {
+  case chunk_size {
+    None -> {
+      case split(buffer, <<"\r\n">>, []) {
+        [possible_size, rest] -> {
+          use chunk_size <- try(
+            bit_array.to_string(possible_size)
+            |> result.map(int.base_parse(_, 16))
+            |> result.flatten()
+            |> result.replace_error(#(
+              ChunkedBody(chunk_size:, parsed:, remaining: buffer),
+              Invalid,
+            )),
+          )
+
+          parse_chunked_body(rest, Some(chunk_size), parsed)
+        }
+        _ ->
+          Error(#(
+            ChunkedBody(chunk_size:, parsed:, remaining: buffer),
+            Incomplete,
+          ))
+      }
+    }
+    Some(0) -> {
+      case buffer {
+        <<"\r\n">> ->
+          Ok(ChunkedBody(chunk_size: None, parsed:, remaining: <<>>))
+        <<"\r\n", rest:bits>> ->
+          Ok(ChunkedBody(chunk_size: None, parsed:, remaining: rest))
+        _ ->
+          Error(#(ChunkedBody(chunk_size:, parsed:, remaining: buffer), Invalid))
+      }
+    }
+    Some(size) -> {
+      use <- bool.guard(
+        bit_array.byte_size(buffer) < size + 2,
+        Error(#(
+          ChunkedBody(chunk_size:, parsed:, remaining: buffer),
+          Incomplete,
+        )),
+      )
+
+      case buffer {
+        <<chunk:bytes-size(size), "\r\n", rest:bits>> ->
+          parse_chunked_body(rest, None, <<parsed:bits, chunk:bits>>)
+        _ ->
+          Error(#(ChunkedBody(chunk_size:, parsed:, remaining: buffer), Invalid))
+      }
+    }
+  }
 }
 
 @external(erlang, "binary", "split")
