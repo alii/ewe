@@ -17,53 +17,45 @@ pub fn main() -> Nil {
   process.sleep_forever()
 }
 
-pub type State {
-  State(buffer: BitArray, parser: parser.ParsingState)
-}
-
 // No public API for now
 pub fn start(port port: Int) {
-  glisten.new(
-    fn(_conn) { #(State(<<>>, parser.new_state()), None) },
-    fn(state, msg, conn) {
-      let assert glisten.Packet(msg) = msg
-      let buffer = <<state.buffer:bits, msg:bits>>
+  glisten.new(fn(_conn) { #(parser.new_parser(), None) }, fn(state, msg, conn) {
+    let assert glisten.Packet(msg) = msg
+    let parser = parser.Parser(..state, buffer: <<state.buffer:bits, msg:bits>>)
 
-      case parser.parse_request(state.parser, buffer) {
-        Ok(request) -> {
-          parser.pretty_print_parsed(request)
+    case parser.parse_request(parser) {
+      Ok(request) -> {
+        parser.pretty_print_parsed(request)
 
-          let response = <<
-            "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!",
-          >>
+        let response = <<
+          "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!",
+        >>
 
-          let _ =
-            response
-            |> bytes_tree.from_bit_array
-            |> glisten.send(conn, _)
-          // |> echo
+        let _ =
+          response
+          |> bytes_tree.from_bit_array
+          |> glisten.send(conn, _)
+        // |> echo
 
-          glisten.continue(State(<<>>, parser.new_state()))
-        }
-        Error(#(parser, buffer, error)) -> {
-          // echo #(buffer, error) as "ERROR!"
-
-          case error {
-            parser.Incomplete -> {
-              glisten.continue(State(buffer:, parser:))
-            }
-            parser.Invalid -> {
-              echo "invalid request" as "ERROR!"
-              glisten.stop()
-            }
-            _ -> {
-              glisten.stop()
-            }
+        glisten.continue(parser.new_parser())
+      }
+      Error(error) -> {
+        case error {
+          parser.Incomplete(parser) -> glisten.continue(parser)
+          parser.Invalid -> {
+            let _ =
+              glisten.send(
+                conn,
+                <<"HTTP/1.1 400 Bad Request\r\n\r\n">>
+                  |> bytes_tree.from_bit_array,
+              )
+            glisten.stop()
           }
+          _ -> glisten.stop()
         }
       }
-    },
-  )
+    }
+  })
   |> glisten.bind("0.0.0.0")
   |> glisten.start(port)
 }

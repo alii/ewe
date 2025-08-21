@@ -1,9 +1,8 @@
-// NOTE: ewww crime mess
-
 import gleam/bit_array
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/atom
+import gleam/http
 import gleam/int
 import gleam/io
 import gleam/option.{type Option, None, Some}
@@ -12,43 +11,36 @@ import gleam/string
 import gleam/uri
 
 pub type ParseError {
-  Incomplete
+  Incomplete(parser: Parser)
+
   Invalid
-
   UnsupportedVersion
-
   HostMissing
   MultiLineHeaderUnsupported
 }
 
 pub type Stage {
-  Begin
+  RequestLine
   Headers
-  // TODO: chunked body
-  Body(content_length: Int)
-  BodyChunked(chunk_size: Option(Int), parsed: BitArray)
+  Body(Option(BodyType))
   Done
 }
 
-pub type Method {
-  Get
-  Post
-  Put
-  Delete
-  Patch
-  Options
-  Head
+pub type BodyType {
+  ContentLength(Int)
+  Chunked(chunk_size: Option(Int))
+  Empty
 }
 
-pub fn parse_method(method: BitArray) -> Result(Method, ParseError) {
+pub fn parse_method(method: BitArray) -> Result(http.Method, ParseError) {
   case method {
-    <<"GET">> -> Ok(Get)
-    <<"POST">> -> Ok(Post)
-    <<"PUT">> -> Ok(Put)
-    <<"DELETE">> -> Ok(Delete)
-    <<"PATCH">> -> Ok(Patch)
-    <<"OPTIONS">> -> Ok(Options)
-    <<"HEAD">> -> Ok(Head)
+    <<"GET">> -> Ok(http.Get)
+    <<"POST">> -> Ok(http.Post)
+    <<"PUT">> -> Ok(http.Put)
+    <<"DELETE">> -> Ok(http.Delete)
+    <<"PATCH">> -> Ok(http.Patch)
+    <<"OPTIONS">> -> Ok(http.Options)
+    <<"HEAD">> -> Ok(http.Head)
     _ -> Error(Invalid)
   }
 }
@@ -57,173 +49,95 @@ pub type HttpVersion {
   Http11
 }
 
-pub type ParsingState {
-  ParsingState(parsed: Option(Request), stage: Stage)
-}
-
-pub fn new_state() -> ParsingState {
-  ParsingState(parsed: None, stage: Begin)
-}
-
-pub type Request {
-  Request(
-    request_line: RequestLine,
-    headers: Dict(String, String),
-    body: BitArray,
+pub type ParsedRequest {
+  ParsedRequest(
+    method: Option(http.Method),
+    uri: Option(uri.Uri),
+    version: Option(HttpVersion),
+    headers: Option(Dict(String, String)),
+    body: Option(BitArray),
   )
 }
 
-pub fn pretty_print_parsed(parsed: Request) {
+pub fn new_parsed_request() -> ParsedRequest {
+  ParsedRequest(
+    method: None,
+    uri: None,
+    version: None,
+    headers: None,
+    body: None,
+  )
+}
+
+pub type Parser {
+  Parser(parsed: ParsedRequest, stage: Stage, buffer: BitArray)
+}
+
+pub fn new_parser() -> Parser {
+  Parser(parsed: new_parsed_request(), stage: RequestLine, buffer: <<>>)
+}
+
+pub fn pretty_print_parsed(parsed: ParsedRequest) {
   io.println("\n================================================")
   io.println("Request:")
-  io.println("Method: " <> { parsed.request_line.method |> string.inspect })
-  io.println("URI: " <> { parsed.request_line.uri |> string.inspect })
-  io.println("Version: " <> { parsed.request_line.version |> string.inspect })
+  io.println("Method: " <> { parsed.method |> string.inspect })
+  io.println("URI: " <> { parsed.uri |> string.inspect })
+  io.println("Version: " <> { parsed.version |> string.inspect })
   io.println("Headers:")
-  dict.each(parsed.headers, fn(key, value) {
+  dict.each(parsed.headers |> option.unwrap(dict.new()), fn(key, value) {
     io.println(
       "  " <> { key |> string.inspect } <> ": " <> { value |> string.inspect },
     )
   })
   io.println("Body:")
   io.println(
-    "  " <> { parsed.body |> bit_array.to_string |> result.unwrap("") },
+    "  "
+    <> {
+      parsed.body
+      |> option.unwrap(<<>>)
+      |> bit_array.to_string
+      |> result.unwrap("")
+    },
   )
 }
 
-pub type Parsed(value) {
-  Parsed(value, remaining: BitArray)
-}
+pub fn parse_request(parser: Parser) -> Result(ParsedRequest, ParseError) {
+  let #(stage_parsed, finished) = case parser.stage {
+    RequestLine -> #(handle_request_line(parser), False)
+    Headers -> #(handle_headers(parser), False)
+    Body(None) -> #(track_body_type(parser), False)
+    Body(Some(Empty)) -> #(Ok(Parser(..parser, stage: Done)), False)
+    Body(Some(ContentLength(content_length))) -> #(
+      handle_body(parser, content_length),
+      False,
+    )
+    Body(Some(Chunked(chunk_size))) -> #(
+      handle_chunked_body(parser, chunk_size),
+      False,
+    )
+    Done -> #(Ok(parser), True)
+  }
 
-pub type Parsing(value) =
-  Result(Parsed(value), ParseError)
-
-pub fn parse_request(
-  state: ParsingState,
-  buffer: BitArray,
-) -> Result(Request, #(ParsingState, BitArray, ParseError)) {
-  case state.stage {
-    Begin -> {
-      let parsed = {
-        use Parsed(request_line, remaining) <- try(parse_request_line(buffer))
-
-        let parsed = Request(request_line:, headers: dict.new(), body: <<>>)
-        let new_state = ParsingState(parsed: Some(parsed), stage: Headers)
-
-        Ok(#(new_state, remaining))
-      }
-
-      case parsed {
-        Ok(#(state, remaining)) -> parse_request(state, remaining)
-        Error(error) -> Error(#(state, buffer, error))
-      }
-    }
-    Headers -> {
-      let parsed = {
-        use Parsed(headers, remaining) <- try(parse_header(buffer, dict.new()))
-
-        // TODO: Parse host maybe?
-        use <- bool.guard(!dict.has_key(headers, "host"), Error(HostMissing))
-
-        use content_length <- try(case dict.has_key(headers, "content-length") {
-          False -> Ok(None)
-          True -> {
-            let assert Ok(content_length) = dict.get(headers, "content-length")
-
-            use content_length <- try(
-              int.parse(content_length) |> result.replace_error(Invalid),
-            )
-
-            Ok(Some(content_length))
-          }
-        })
-
-        use chunked <- try(case dict.has_key(headers, "transfer-encoding") {
-          False -> Ok(None)
-          True -> {
-            let assert Ok(chunked) = dict.get(headers, "transfer-encoding")
-            Ok(Some(chunked == "chunked"))
-          }
-        })
-
-        let parsed =
-          option.map(state.parsed, fn(parsed) { Request(..parsed, headers:) })
-
-        let stage = case chunked, content_length {
-          Some(True), _ -> BodyChunked(chunk_size: None, parsed: <<>>)
-          _, Some(content_length) -> Body(content_length:)
-          _, _ -> Done
-        }
-
-        let new_state = ParsingState(parsed:, stage:)
-        Ok(#(new_state, remaining))
-      }
-
-      case parsed {
-        Ok(#(state, remaining)) -> parse_request(state, remaining)
-        Error(error) -> Error(#(state, buffer, error))
-      }
-    }
-    Body(content_length) -> {
-      let parsed = {
-        case buffer {
-          <<body:bytes-size(content_length)>> -> {
-            let parsed =
-              option.map(state.parsed, fn(parsed) { Request(..parsed, body:) })
-
-            let new_state = ParsingState(parsed:, stage: Done)
-            Ok(#(new_state, <<>>))
-          }
-          <<_:bytes-size(content_length), _>> -> Error(Invalid)
-          _ -> Error(Incomplete)
-        }
-      }
-
-      case parsed {
-        Ok(#(state, remaining)) -> parse_request(state, remaining)
-        Error(error) -> Error(#(state, buffer, error))
-      }
-    }
-    BodyChunked(chunk_size, parsed) -> {
-      case parse_chunked_body(buffer, chunk_size, parsed) {
-        Ok(ChunkedBody(_, body, <<>>)) -> {
-          let parsed =
-            option.map(state.parsed, fn(parsed) { Request(..parsed, body:) })
-
-          let new_state = ParsingState(parsed:, stage: Done)
-          parse_request(new_state, <<>>)
-        }
-        Ok(ChunkedBody(_, body, remaining)) -> todo
-        Error(#(ChunkedBody(chunk_size:, parsed:, remaining:), error)) -> {
-          let new_state =
-            ParsingState(..state, stage: BodyChunked(chunk_size:, parsed:))
-          Error(#(new_state, remaining, error))
-        }
-      }
-    }
-    Done -> {
-      let assert option.Some(parsed) = state.parsed
-      Ok(parsed)
-    }
+  case stage_parsed, finished {
+    Ok(parser), False -> parse_request(parser)
+    Ok(parser), True -> Ok(parser.parsed)
+    Error(error), _ -> Error(error)
   }
 }
 
-pub type RequestLine {
-  RequestLine(method: Method, uri: uri.Uri, version: HttpVersion)
-}
-
-fn parse_request_line(buffer: BitArray) -> Parsing(RequestLine) {
-  use #(request_line, remaining) <- try(case split(buffer, <<"\r\n">>, []) {
+fn handle_request_line(parser: Parser) -> Result(Parser, ParseError) {
+  let request_parts = case split(parser.buffer, <<"\r\n">>, []) {
     [request_line, remaining] -> Ok(#(request_line, remaining))
-    _ -> Error(Incomplete)
-  })
+    _ -> Error(Incomplete(parser))
+  }
+  use #(request_line, remaining) <- try(request_parts)
 
-  use #(method, target, version) <- try(
-    case split(request_line, <<" ">>, [atom.create("global")]) {
-      [method, target, version] -> Ok(#(method, target, version))
-      _ -> Error(Invalid)
-    },
-  )
+  let global = atom.create("global")
+  let request_line_parts = case split(request_line, <<" ">>, [global]) {
+    [method, target, version] -> Ok(#(method, target, version))
+    _ -> Error(Invalid)
+  }
+  use #(method, target, version) <- try(request_line_parts)
 
   use method <- try(parse_method(method))
 
@@ -240,31 +154,35 @@ fn parse_request_line(buffer: BitArray) -> Parsing(RequestLine) {
     _ -> Error(Invalid)
   })
 
-  RequestLine(method, target, version)
-  |> Parsed(remaining)
-  |> Ok
+  let parsed =
+    ParsedRequest(
+      ..parser.parsed,
+      method: Some(method),
+      uri: Some(target),
+      version: Some(version),
+    )
+
+  Ok(Parser(parsed:, stage: Headers, buffer: remaining))
 }
 
-pub fn parse_header(
-  buffer: BitArray,
-  headers: Dict(String, String),
-) -> Parsing(Dict(String, String)) {
-  // TODO: handle not combinable headers
-
-  case buffer {
-    <<"\r\n", rest:bits>> -> Ok(Parsed(headers, rest))
+fn handle_headers(parser: Parser) -> Result(Parser, ParseError) {
+  case parser.buffer {
+    <<"\r\n", remaining:bits>> ->
+      Ok(Parser(..parser, stage: Body(None), buffer: remaining))
     <<"\t", _rest:bits>> | <<" ", _rest:bits>> ->
       Error(MultiLineHeaderUnsupported)
     _ -> {
-      use #(header, rest) <- try(case split(buffer, <<"\r\n">>, []) {
-        [header, rest] -> Ok(#(header, rest))
-        _ -> Error(Incomplete)
-      })
+      let header_parts = case split(parser.buffer, <<"\r\n">>, []) {
+        [header, remaining] -> Ok(#(header, remaining))
+        _ -> Error(Incomplete(parser))
+      }
+      use #(header, remaining) <- try(header_parts)
 
-      use #(name, value) <- try(case split(header, <<":">>, []) {
+      let header_parts = case split(header, <<":">>, []) {
         [name, value] -> Ok(#(name, value))
         _ -> Error(Invalid)
-      })
+      }
+      use #(name, value) <- try(header_parts)
 
       use name <- try(
         bit_array.to_string(name)
@@ -281,74 +199,107 @@ pub fn parse_header(
       )
 
       let headers =
-        dict.upsert(headers, name, fn(exists) {
+        option.unwrap(parser.parsed.headers, dict.new())
+        |> dict.upsert(name, fn(exists) {
           case exists {
             option.Some(acc) -> acc <> ", " <> value
             option.None -> value
           }
         })
+      let parsed = ParsedRequest(..parser.parsed, headers: Some(headers))
 
-      parse_header(rest, headers)
+      handle_headers(Parser(..parser, parsed:, buffer: remaining))
     }
   }
 }
 
-pub type ChunkedBody {
-  ChunkedBody(chunk_size: Option(Int), parsed: BitArray, remaining: BitArray)
+fn track_body_type(parser: Parser) -> Result(Parser, ParseError) {
+  case parser.parsed.headers {
+    None -> Ok(Parser(..parser, stage: Body(None)))
+    Some(headers) -> {
+      let content_length =
+        dict.get(headers, "content-length")
+        |> result.map(int.parse)
+        |> result.flatten()
+      let transfer_encoding = dict.get(headers, "transfer-encoding")
+
+      case transfer_encoding, content_length {
+        Ok("chunked"), _ ->
+          Ok(Parser(..parser, stage: Body(Some(Chunked(None)))))
+        _, Ok(content_length) ->
+          Ok(Parser(..parser, stage: Body(Some(ContentLength(content_length)))))
+        _, _ -> Ok(Parser(..parser, stage: Body(Some(Empty))))
+      }
+    }
+  }
 }
 
-fn parse_chunked_body(
-  buffer: BitArray,
+fn handle_body(
+  parser: Parser,
+  content_length: Int,
+) -> Result(Parser, ParseError) {
+  case parser.buffer {
+    <<body:bytes-size(content_length)>> -> {
+      let parsed = ParsedRequest(..parser.parsed, body: Some(body))
+      Ok(Parser(..parser, parsed:, stage: Done))
+    }
+    <<_:bytes-size(content_length), _>> -> Error(Invalid)
+    _ -> Error(Incomplete(parser))
+  }
+}
+
+fn handle_chunked_body(
+  parser: Parser,
   chunk_size: Option(Int),
-  parsed: BitArray,
-) -> Result(ChunkedBody, #(ChunkedBody, ParseError)) {
+) -> Result(Parser, ParseError) {
   case chunk_size {
     None -> {
-      case split(buffer, <<"\r\n">>, []) {
-        [possible_size, rest] -> {
+      case split(parser.buffer, <<"\r\n">>, []) {
+        [possible_size, remaining] -> {
           use chunk_size <- try(
             bit_array.to_string(possible_size)
             |> result.map(int.base_parse(_, 16))
             |> result.flatten()
-            |> result.replace_error(#(
-              ChunkedBody(chunk_size:, parsed:, remaining: buffer),
-              Invalid,
-            )),
+            |> result.replace_error(Invalid),
           )
 
-          parse_chunked_body(rest, Some(chunk_size), parsed)
+          let parser =
+            Parser(
+              ..parser,
+              stage: Body(Some(Chunked(Some(chunk_size)))),
+              buffer: remaining,
+            )
+
+          handle_chunked_body(parser, Some(chunk_size))
         }
-        _ ->
-          Error(#(
-            ChunkedBody(chunk_size:, parsed:, remaining: buffer),
-            Incomplete,
-          ))
+        _ -> Error(Incomplete(parser))
       }
     }
     Some(0) -> {
-      case buffer {
-        <<"\r\n">> ->
-          Ok(ChunkedBody(chunk_size: None, parsed:, remaining: <<>>))
-        <<"\r\n", rest:bits>> ->
-          Ok(ChunkedBody(chunk_size: None, parsed:, remaining: rest))
-        _ ->
-          Error(#(ChunkedBody(chunk_size:, parsed:, remaining: buffer), Invalid))
+      case parser.buffer {
+        <<"\r\n">> -> Ok(Parser(..parser, stage: Done))
+        <<"\r\n", trailers:bits>> -> {
+          let parser = Parser(..parser, buffer: trailers)
+          handle_headers(parser)
+        }
+        _ -> Error(Invalid)
       }
     }
     Some(size) -> {
-      use <- bool.guard(
-        bit_array.byte_size(buffer) < size + 2,
-        Error(#(
-          ChunkedBody(chunk_size:, parsed:, remaining: buffer),
-          Incomplete,
-        )),
-      )
-
-      case buffer {
-        <<chunk:bytes-size(size), "\r\n", rest:bits>> ->
-          parse_chunked_body(rest, None, <<parsed:bits, chunk:bits>>)
-        _ ->
-          Error(#(ChunkedBody(chunk_size:, parsed:, remaining: buffer), Invalid))
+      case parser.buffer {
+        <<chunk:bytes-size(size), "\r\n", remaining:bits>> -> {
+          let body = option.unwrap(parser.parsed.body, <<>>)
+          let parsed =
+            ParsedRequest(
+              ..parser.parsed,
+              body: Some(<<body:bits, chunk:bits>>),
+            )
+          let parser =
+            Parser(parsed:, stage: Body(Some(Chunked(None))), buffer: remaining)
+          handle_chunked_body(parser, None)
+        }
+        <<_:bytes-size(size), _>> -> Error(Invalid)
+        _ -> Error(Incomplete(parser))
       }
     }
   }
