@@ -5,8 +5,10 @@ import gleam/erlang/atom
 import gleam/http
 import gleam/int
 import gleam/io
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
+import gleam/set.{type Set}
 import gleam/string
 import gleam/uri
 
@@ -14,6 +16,7 @@ pub type ParseError {
   Incomplete(parser: Parser)
 
   Invalid
+  TooLarge
   UnsupportedVersion
   HostMissing
   MultiLineHeaderUnsupported
@@ -22,7 +25,8 @@ pub type ParseError {
 pub type Stage {
   RequestLine
   Headers
-  Body(Option(BodyType))
+  Body(BodyType)
+  Trailers
   Done
 }
 
@@ -31,6 +35,23 @@ pub type BodyType {
   Chunked(chunk_size: Option(Int))
   Empty
 }
+
+// 8 KB
+const max_request_line_size = 8192
+
+// 8000 octets
+const max_target_size = 8000
+
+// 8 KB
+const max_header_size = 8192
+
+// 4 KB
+const max_header_value_size = 4096
+
+// 10 MB
+const max_body_size = 10_485_760
+
+const max_headers_amount = 100
 
 pub fn parse_method(method: BitArray) -> Result(http.Method, ParseError) {
   case method {
@@ -55,7 +76,9 @@ pub type ParsedRequest {
     uri: Option(uri.Uri),
     version: Option(HttpVersion),
     headers: Option(Dict(String, String)),
+    trailers: Option(Set(String)),
     body: Option(BitArray),
+    body_size: Int,
   )
 }
 
@@ -65,7 +88,9 @@ pub fn new_parsed_request() -> ParsedRequest {
     uri: None,
     version: None,
     headers: None,
+    trailers: None,
     body: None,
+    body_size: 0,
   )
 }
 
@@ -105,16 +130,16 @@ pub fn parse_request(parser: Parser) -> Result(ParsedRequest, ParseError) {
   let #(stage_parsed, finished) = case parser.stage {
     RequestLine -> #(handle_request_line(parser), False)
     Headers -> #(handle_headers(parser), False)
-    Body(None) -> #(track_body_type(parser), False)
-    Body(Some(Empty)) -> #(Ok(Parser(..parser, stage: Done)), False)
-    Body(Some(ContentLength(content_length))) -> #(
+    Body(Empty) -> #(Ok(Parser(..parser, stage: Done)), False)
+    Body(ContentLength(content_length)) -> #(
       handle_body(parser, content_length),
       False,
     )
-    Body(Some(Chunked(chunk_size))) -> #(
+    Body(Chunked(chunk_size)) -> #(
       handle_chunked_body(parser, chunk_size),
       False,
     )
+    Trailers -> #(handle_headers(parser), False)
     Done -> #(Ok(parser), True)
   }
 
@@ -132,12 +157,22 @@ fn handle_request_line(parser: Parser) -> Result(Parser, ParseError) {
   }
   use #(request_line, remaining) <- try(request_parts)
 
+  use <- bool.guard(
+    bit_array.byte_size(request_line) > max_request_line_size,
+    Error(TooLarge),
+  )
+
   let global = atom.create("global")
   let request_line_parts = case split(request_line, <<" ">>, [global]) {
     [method, target, version] -> Ok(#(method, target, version))
     _ -> Error(Invalid)
   }
   use #(method, target, version) <- try(request_line_parts)
+
+  use <- bool.guard(
+    bit_array.byte_size(target) > max_target_size,
+    Error(TooLarge),
+  )
 
   use method <- try(parse_method(method))
 
@@ -166,36 +201,100 @@ fn handle_request_line(parser: Parser) -> Result(Parser, ParseError) {
 }
 
 fn handle_headers(parser: Parser) -> Result(Parser, ParseError) {
-  case parser.buffer {
-    <<"\r\n", remaining:bits>> ->
-      Ok(Parser(..parser, stage: Body(None), buffer: remaining))
-    <<"\t", _rest:bits>> | <<" ", _rest:bits>> ->
-      Error(MultiLineHeaderUnsupported)
-    _ -> {
-      let header_parts = case split(parser.buffer, <<"\r\n">>, []) {
-        [header, remaining] -> Ok(#(header, remaining))
-        _ -> Error(Incomplete(parser))
+  use <- bool.guard(
+    parser.parsed.headers |> option.unwrap(dict.new()) |> dict.size()
+      > max_headers_amount,
+    Error(TooLarge),
+  )
+
+  case parser.buffer, parser.stage {
+    <<"\r\n", remaining:bits>>, Headers -> {
+      case parser.parsed.headers {
+        None -> Ok(Parser(..parser, stage: Body(Empty), buffer: remaining))
+        Some(headers) -> {
+          let content_length =
+            dict.get(headers, "content-length")
+            |> result.map(int.parse)
+            |> result.flatten()
+          let transfer_encoding = dict.get(headers, "transfer-encoding")
+
+          case transfer_encoding, content_length {
+            Ok("chunked"), _ ->
+              Ok(
+                Parser(..parser, stage: Body(Chunked(None)), buffer: remaining),
+              )
+            _, Ok(content_length) ->
+              Ok(
+                Parser(
+                  ..parser,
+                  stage: Body(ContentLength(content_length)),
+                  buffer: remaining,
+                ),
+              )
+            _, _ -> Ok(Parser(..parser, stage: Body(Empty), buffer: remaining))
+          }
+        }
       }
-      use #(header, remaining) <- try(header_parts)
-
-      let header_parts = case split(header, <<":">>, []) {
-        [name, value] -> Ok(#(name, value))
-        _ -> Error(Invalid)
+    }
+    <<"\r\n">>, Trailers -> Ok(Parser(..parser, stage: Done))
+    <<"\r\n", _rest:bits>>, Trailers -> Error(Invalid)
+    <<"\t", _rest:bits>>, Headers -> Error(MultiLineHeaderUnsupported)
+    <<" ", _rest:bits>>, Headers -> Error(MultiLineHeaderUnsupported)
+    _, _ -> {
+      case handle_header(parser) {
+        Ok(parser) -> handle_headers(parser)
+        Error(error) -> Error(error)
       }
-      use #(name, value) <- try(header_parts)
+    }
+  }
+}
 
-      use name <- try(
-        bit_array.to_string(name)
-        |> result.map(string.lowercase)
-        |> result.replace_error(Invalid),
-      )
+fn handle_header(parser: Parser) -> Result(Parser, ParseError) {
+  let header_parts = case split(parser.buffer, <<"\r\n">>, []) {
+    [header, remaining] -> Ok(#(header, remaining))
+    _ -> Error(Incomplete(parser))
+  }
+  use #(header, remaining) <- try(header_parts)
 
-      use <- bool.guard(string.contains(name, " "), Error(Invalid))
+  use <- bool.guard(
+    bit_array.byte_size(header) > max_header_size,
+    Error(TooLarge),
+  )
 
+  let header_parts = case split(header, <<":">>, []) {
+    [name, value] -> Ok(#(name, value))
+    _ -> Error(Invalid)
+  }
+  use #(name, value) <- try(header_parts)
+
+  use name <- try(
+    bit_array.to_string(name)
+    |> result.map(string.lowercase)
+    |> result.replace_error(Invalid),
+  )
+
+  use <- bool.guard(string.contains(name, " "), Error(Invalid))
+
+  let skip = case parser.stage {
+    Trailers ->
+      !set.contains(parser.parsed.trailers |> option.unwrap(set.new()), name)
+    _ -> False
+  }
+
+  case skip {
+    True -> {
+      Ok(Parser(..parser, buffer: remaining))
+    }
+    False -> {
       use value <- try(
         bit_array.to_string(value)
         |> result.map(string.trim)
         |> result.replace_error(Invalid),
+      )
+
+      use <- bool.guard(
+        string.byte_size(value) > max_header_value_size,
+        Error(TooLarge),
       )
 
       let headers =
@@ -206,30 +305,25 @@ fn handle_headers(parser: Parser) -> Result(Parser, ParseError) {
             option.None -> value
           }
         })
-      let parsed = ParsedRequest(..parser.parsed, headers: Some(headers))
 
-      handle_headers(Parser(..parser, parsed:, buffer: remaining))
-    }
-  }
-}
+      let trailers = case name {
+        "trailer" -> {
+          let trailers = option.unwrap(parser.parsed.trailers, set.new())
 
-fn track_body_type(parser: Parser) -> Result(Parser, ParseError) {
-  case parser.parsed.headers {
-    None -> Ok(Parser(..parser, stage: Body(None)))
-    Some(headers) -> {
-      let content_length =
-        dict.get(headers, "content-length")
-        |> result.map(int.parse)
-        |> result.flatten()
-      let transfer_encoding = dict.get(headers, "transfer-encoding")
+          let trailers =
+            string.split(value, ",")
+            |> list.fold(trailers, fn(acc, trailer) {
+              set.insert(acc, string.trim(trailer) |> string.lowercase())
+            })
 
-      case transfer_encoding, content_length {
-        Ok("chunked"), _ ->
-          Ok(Parser(..parser, stage: Body(Some(Chunked(None)))))
-        _, Ok(content_length) ->
-          Ok(Parser(..parser, stage: Body(Some(ContentLength(content_length)))))
-        _, _ -> Ok(Parser(..parser, stage: Body(Some(Empty))))
+          Some(trailers)
+        }
+        _ -> parser.parsed.trailers
       }
+
+      let parsed =
+        ParsedRequest(..parser.parsed, headers: Some(headers), trailers:)
+      Ok(Parser(..parser, parsed:, buffer: remaining))
     }
   }
 }
@@ -238,6 +332,8 @@ fn handle_body(
   parser: Parser,
   content_length: Int,
 ) -> Result(Parser, ParseError) {
+  use <- bool.guard(content_length > max_body_size, Error(TooLarge))
+
   case parser.buffer {
     <<body:bytes-size(content_length)>> -> {
       let parsed = ParsedRequest(..parser.parsed, body: Some(body))
@@ -252,6 +348,8 @@ fn handle_chunked_body(
   parser: Parser,
   chunk_size: Option(Int),
 ) -> Result(Parser, ParseError) {
+  use <- bool.guard(parser.parsed.body_size > max_body_size, Error(TooLarge))
+
   case chunk_size {
     None -> {
       case split(parser.buffer, <<"\r\n">>, []) {
@@ -266,7 +364,7 @@ fn handle_chunked_body(
           let parser =
             Parser(
               ..parser,
-              stage: Body(Some(Chunked(Some(chunk_size)))),
+              stage: Body(Chunked(Some(chunk_size))),
               buffer: remaining,
             )
 
@@ -278,14 +376,18 @@ fn handle_chunked_body(
     Some(0) -> {
       case parser.buffer {
         <<"\r\n">> -> Ok(Parser(..parser, stage: Done))
-        <<"\r\n", trailers:bits>> -> {
-          let parser = Parser(..parser, buffer: trailers)
-          handle_headers(parser)
+        trailers -> {
+          Ok(Parser(..parser, stage: Trailers, buffer: trailers))
         }
-        _ -> Error(Invalid)
       }
     }
     Some(size) -> {
+      use <- bool.guard(
+        size > max_body_size / 10
+          || parser.parsed.body_size + size > max_body_size,
+        Error(TooLarge),
+      )
+
       case parser.buffer {
         <<chunk:bytes-size(size), "\r\n", remaining:bits>> -> {
           let body = option.unwrap(parser.parsed.body, <<>>)
@@ -293,12 +395,13 @@ fn handle_chunked_body(
             ParsedRequest(
               ..parser.parsed,
               body: Some(<<body:bits, chunk:bits>>),
+              body_size: parser.parsed.body_size + size,
             )
           let parser =
-            Parser(parsed:, stage: Body(Some(Chunked(None))), buffer: remaining)
+            Parser(parsed:, stage: Body(Chunked(None)), buffer: remaining)
           handle_chunked_body(parser, None)
         }
-        <<_:bytes-size(size), _>> -> Error(Invalid)
+        // <<_:bytes-size(size), _>> -> Error(Invalid)
         _ -> Error(Incomplete(parser))
       }
     }

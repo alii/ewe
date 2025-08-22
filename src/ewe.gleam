@@ -51,6 +51,10 @@ pub fn start(port port: Int) {
               )
             glisten.stop()
           }
+          parser.TooLarge -> {
+            echo "Too large"
+            glisten.stop()
+          }
           _ -> glisten.stop()
         }
       }
