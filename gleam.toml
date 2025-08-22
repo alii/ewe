@@ -1,6 +1,6 @@
 name = "ewe"
-version = "0.0.1"
-description = "[WIP] 🐑 a fluffy Gleam web server"
+version = "0.0.2"
+description = "[Extremely WIP] 🐑 a fluffy Gleam web server"
 target = "erlang"
 
 licences = ["Apache-2.0"]

@@ -1,3 +1,5 @@
+import external/parser
+import external/response as ewe_response
 import gleam/bytes_tree
 import gleam/http/request
 import gleam/http/response
@@ -5,17 +7,19 @@ import gleam/option.{None}
 import gleam/otp/actor
 import gleam/otp/static_supervisor as supervisor
 import glisten
-import internal/parser
-import internal/response as ewe_response
 
-pub type Handler =
-  fn(request.Request(BitArray)) -> response.Response(bytes_tree.BytesTree)
-
-pub type Builder {
-  Builder(handler: Handler, port: Int)
+pub opaque type Builder {
+  Builder(
+    handler: fn(request.Request(BitArray)) ->
+      response.Response(bytes_tree.BytesTree),
+    port: Int,
+  )
 }
 
-pub fn new(handler: Handler) -> Builder {
+pub fn new(
+  handler: fn(request.Request(BitArray)) ->
+    response.Response(bytes_tree.BytesTree),
+) -> Builder {
   Builder(handler: handler, port: 8080)
 }
 
