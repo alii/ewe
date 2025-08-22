@@ -1,5 +1,5 @@
-import external/parser
-import external/response as ewe_response
+import ewe/internal/parser
+import ewe/internal/response as ewe_response
 import gleam/bytes_tree
 import gleam/http/request
 import gleam/http/response
