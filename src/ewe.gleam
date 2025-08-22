@@ -24,9 +24,7 @@ pub fn start(port port: Int) {
     let parser = parser.Parser(..state, buffer: <<state.buffer:bits, msg:bits>>)
 
     case parser.parse_request(parser) {
-      Ok(request) -> {
-        parser.pretty_print_parsed(request)
-
+      Ok(_request) -> {
         let response = <<
           "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!",
         >>
@@ -35,7 +33,6 @@ pub fn start(port port: Int) {
           response
           |> bytes_tree.from_bit_array
           |> glisten.send(conn, _)
-        // |> echo
 
         glisten.continue(parser.new_parser())
       }
