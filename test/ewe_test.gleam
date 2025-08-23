@@ -1,9 +1,8 @@
 import client/tcp as client
 import ewe
 import gleam/bytes_tree
-import gleam/http/request
 import gleam/http/response
-import gleam/httpc
+import gleam/result
 import gleeunit
 import glisten/tcp
 
@@ -11,56 +10,75 @@ pub fn main() -> Nil {
   gleeunit.main()
 }
 
-pub fn handler(
-  req: request.Request(BitArray),
-) -> response.Response(bytes_tree.BytesTree) {
-  case request.path_segments(req) {
-    [] ->
-      response.new(200)
-      |> response.set_header("Content-Type", "text/plain")
-      |> response.set_header("Content-Length", "13")
-      |> response.set_body(bytes_tree.from_string("Hello, world!"))
-    _ ->
-      response.new(404)
-      |> response.set_header("Content-Type", "text/plain")
-      |> response.set_header("Content-Length", "9")
-      |> response.set_body(bytes_tree.from_string("Not found"))
-  }
-}
+pub fn echo_server(port: Int) {
+  let assert Ok(_) =
+    ewe.new(fn(req) {
+      let resp = {
+        use req <- result.try(
+          response.new(400)
+          |> response.set_body(bytes_tree.new())
+          |> result.replace_error(ewe.read_body(req), _),
+        )
 
-pub fn with_http_test() {
-  let assert Ok(_started) =
-    ewe.new(handler)
-    |> ewe.port(42_070)
+        response.new(200)
+        |> response.set_body(bytes_tree.from_bit_array(req.body))
+        |> Ok
+      }
+
+      result.unwrap_both(resp)
+    })
+    |> ewe.port(port)
     |> ewe.start()
 
-  let assert Ok(req) = request.to("http://localhost:42070")
-  let assert Ok(resp) = httpc.send(req)
-
-  assert resp.status == 200
-  assert response.get_header(resp, "Content-Type") == Ok("text/plain")
-  assert resp.body == "Hello, world!"
+  Nil
 }
 
-pub fn with_tcp_sockets_test() {
-  let assert Ok(_started) =
-    ewe.new(handler)
-    |> ewe.port(42_071)
-    |> ewe.start()
+pub fn chunked_body_test() {
+  echo_server(42_069)
 
-  use socket <- client.with_socket(port: 42_070, active: False)
+  let req =
+    "GET / HTTP/1.1\r\n"
+    <> "Host: localhost:42069\r\n"
+    <> "Transfer-Encoding: chunked\r\n\r\n"
+    <> "D\r\n"
+    <> "Hello, world!\r\n"
+    <> "D\r\n"
+    <> " How are you?\r\n"
+    <> "0\r\n\r\n"
 
-  client.send_request(
-    socket,
-    req: "GET / HTTP/1.1\r\nHost: localhost:42070\r\n\r\n",
-    chunks: 3,
-    interval: 10,
-  )
+  use socket <- client.with_socket(port: 42_069, active: False)
+  let _ = tcp.send(socket, bytes_tree.from_string(req))
 
-  let raw_resp = <<
-    "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 13\r\n\r\nHello, world!",
-  >>
+  let assert Ok(<<"HTTP/1.1 200 OK\r\n\r\nHello, world! How are you?">>) =
+    tcp.receive(socket, 0)
 
-  let assert Ok(resp) = tcp.receive(socket, 0)
-  assert resp == raw_resp
+  Nil
+}
+
+pub fn request_chunked_test() {
+  echo_server(42_070)
+
+  let part1 = "GET / HTTP/1.1\r\n"
+  let part2 = "Host: localhost:42069\r\n"
+  let part3 = "Transfer-Encoding: chunked\r\n\r\n"
+  let part4 = "D\r\n"
+  let part5 = "Hello, world!\r\n"
+  let part6 = "D\r\n"
+  let part7 = " How are you?\r\n"
+  let part8 = "0\r\n\r\n"
+
+  use socket <- client.with_socket(port: 42_069, active: False)
+  let _ = tcp.send(socket, bytes_tree.from_string(part1))
+  let _ = tcp.send(socket, bytes_tree.from_string(part2))
+  let _ = tcp.send(socket, bytes_tree.from_string(part3))
+  let _ = tcp.send(socket, bytes_tree.from_string(part4))
+  let _ = tcp.send(socket, bytes_tree.from_string(part5))
+  let _ = tcp.send(socket, bytes_tree.from_string(part6))
+  let _ = tcp.send(socket, bytes_tree.from_string(part7))
+  let _ = tcp.send(socket, bytes_tree.from_string(part8))
+
+  let assert Ok(<<"HTTP/1.1 200 OK\r\n\r\nHello, world! How are you?">>) =
+    tcp.receive(socket, 0)
+
+  Nil
 }
