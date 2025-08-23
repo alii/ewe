@@ -1,19 +1,61 @@
+import ewe/internal/http as http_
 import gleam/bytes_tree
 import gleam/http/response
 import gleam/int
 import gleam/list
 
+pub fn append_default_headers(
+  resp: response.Response(bytes_tree.BytesTree),
+  version: http_.HttpVersion,
+) -> response.Response(bytes_tree.BytesTree) {
+  let body_size = bytes_tree.byte_size(resp.body)
+
+  let resp = case response.get_header(resp, "content-length") {
+    Ok(_) -> resp
+    Error(Nil) ->
+      response.set_header(resp, "content-length", int.to_string(body_size))
+  }
+
+  case version {
+    http_.Http10 -> response.set_header(resp, "connection", "close")
+    http_.Http11 -> {
+      case response.get_header(resp, "connection") {
+        Ok(_) -> resp
+        Error(Nil) -> response.set_header(resp, "connection", "keep-alive")
+      }
+    }
+  }
+}
+
 pub fn encode(
   response: response.Response(bytes_tree.BytesTree),
 ) -> bytes_tree.BytesTree {
   bytes_tree.new()
-  |> bytes_tree.append(encode_status(response.status))
-  |> bytes_tree.append(encode_headers(response))
+  |> bytes_tree.append(encode_status_line(response.status))
+  |> bytes_tree.append(encode_headers(response.headers))
   |> bytes_tree.append_tree(response.body)
 }
 
-fn encode_status(status: Int) -> BitArray {
-  let status_name = case status {
+fn encode_status_line(status: Int) -> BitArray {
+  let status_name = encode_status_number(status)
+  let status = int.to_string(status)
+
+  <<"HTTP/1.1 ", status:utf8, " ", status_name:bits, "\r\n">>
+}
+
+fn encode_headers(headers: List(#(String, String))) -> BitArray {
+  let headers =
+    list.fold(headers, <<>>, fn(acc, headers) {
+      let #(key, value) = headers
+
+      <<acc:bits, key:utf8, ": ", value:utf8, "\r\n">>
+    })
+
+  <<headers:bits, "\r\n">>
+}
+
+fn encode_status_number(status: Int) -> BitArray {
+  case status {
     100 -> <<"Continue">>
     101 -> <<"Switching Protocols">>
     102 -> <<"Processing">>
@@ -76,19 +118,4 @@ fn encode_status(status: Int) -> BitArray {
     511 -> <<"Network Authentication Required">>
     _ -> <<"Unknown">>
   }
-
-  let status = int.to_string(status)
-
-  <<"HTTP/1.1 ", status:utf8, " ", status_name:bits, "\r\n">>
-}
-
-fn encode_headers(response: response.Response(bytes_tree.BytesTree)) -> BitArray {
-  let headers =
-    list.fold(response.headers, <<>>, fn(acc, headers) {
-      let #(key, value) = headers
-
-      <<acc:bits, key:utf8, ": ", value:utf8, "\r\n">>
-    })
-
-  <<headers:bits, "\r\n">>
 }

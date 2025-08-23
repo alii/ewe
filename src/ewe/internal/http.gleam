@@ -76,10 +76,19 @@ pub fn read_from_socket(
   }
 }
 
+pub type HttpVersion {
+  Http10
+  Http11
+}
+
+pub type ParsedRequest {
+  ParsedRequest(request: Request(Connection), version: HttpVersion)
+}
+
 pub fn parse_request(
   connection: Connection,
   buffer: BitArray,
-) -> Result(Request(Connection), ParseError) {
+) -> Result(ParsedRequest, ParseError) {
   case decoder.decode_packet(HttpBin, buffer, []) {
     Ok(Packet(HttpRequest(atom_method, AbsPath(target), version), rest)) -> {
       // Request Line
@@ -94,8 +103,9 @@ pub fn parse_request(
         |> replace_error(InvalidTarget),
       )
 
-      use _version <- try(case version {
-        #(1, 0) | #(1, 1) -> Ok(Nil)
+      use version <- try(case version {
+        #(1, 0) -> Ok(Http10)
+        #(1, 1) -> Ok(Http11)
         _ -> Error(InvalidVersion)
       })
 
@@ -126,15 +136,18 @@ pub fn parse_request(
           http.Https -> 443
         })
 
-      Ok(Request(
-        method:,
-        headers: dict.to_list(headers),
-        body: Connection(..connection, buffer: rest),
-        scheme:,
-        host:,
-        port: option.Some(port),
-        path: uri.path,
-        query: uri.query,
+      Ok(ParsedRequest(
+        request: Request(
+          method:,
+          headers: dict.to_list(headers),
+          body: Connection(..connection, buffer: rest),
+          scheme:,
+          host:,
+          port: option.Some(port),
+          path: uri.path,
+          query: uri.query,
+        ),
+        version:,
       ))
     }
     Ok(More(size)) -> {
@@ -253,7 +266,7 @@ pub fn read_chunked_body(
         transport,
         socket,
         amount: 0,
-        buffer: body,
+        buffer:,
         on_error: InvalidBody,
       ))
 
@@ -295,7 +308,7 @@ pub fn parse_body_chunk(buffer: BitArray) -> Result(BodyChunk, ParseError) {
         _ -> Ok(Incomplete)
       }
     }
-    _ -> Error(InvalidBody)
+    _ -> Ok(Incomplete)
   }
 }
 

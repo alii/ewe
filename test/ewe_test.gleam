@@ -1,6 +1,7 @@
 import client/tcp as client
 import ewe
 import gleam/bytes_tree
+import gleam/erlang/process
 import gleam/http/response
 import gleam/result
 import gleeunit
@@ -28,6 +29,8 @@ pub fn echo_server(port: Int) {
       result.unwrap_both(resp)
     })
     |> ewe.port(port)
+    // |> ewe.bind_all()
+    // |> ewe.ipv6()
     |> ewe.start()
 
   Nil
@@ -49,8 +52,9 @@ pub fn chunked_body_test() {
   use socket <- client.with_socket(port: 42_069, active: False)
   let _ = tcp.send(socket, bytes_tree.from_string(req))
 
-  let assert Ok(<<"HTTP/1.1 200 OK\r\n\r\nHello, world! How are you?">>) =
-    tcp.receive(socket, 0)
+  let assert Ok(<<
+    "HTTP/1.1 200 OK\r\ncontent-length: 26\r\nconnection: keep-alive\r\n\r\nHello, world! How are you?",
+  >>) = tcp.receive(socket, 0)
 
   Nil
 }
@@ -67,18 +71,56 @@ pub fn request_chunked_test() {
   let part7 = " How are you?\r\n"
   let part8 = "0\r\n\r\n"
 
-  use socket <- client.with_socket(port: 42_069, active: False)
+  use socket <- client.with_socket(port: 42_070, active: False)
   let _ = tcp.send(socket, bytes_tree.from_string(part1))
+  process.sleep(50)
   let _ = tcp.send(socket, bytes_tree.from_string(part2))
+  process.sleep(50)
   let _ = tcp.send(socket, bytes_tree.from_string(part3))
+  process.sleep(50)
   let _ = tcp.send(socket, bytes_tree.from_string(part4))
+  process.sleep(50)
   let _ = tcp.send(socket, bytes_tree.from_string(part5))
+  process.sleep(50)
   let _ = tcp.send(socket, bytes_tree.from_string(part6))
+  process.sleep(50)
   let _ = tcp.send(socket, bytes_tree.from_string(part7))
+  process.sleep(50)
   let _ = tcp.send(socket, bytes_tree.from_string(part8))
+  process.sleep(50)
 
-  let assert Ok(<<"HTTP/1.1 200 OK\r\n\r\nHello, world! How are you?">>) =
-    tcp.receive(socket, 0)
+  let assert Ok(<<
+    "HTTP/1.1 200 OK\r\ncontent-length: 26\r\nconnection: keep-alive\r\n\r\nHello, world! How are you?",
+  >>) = tcp.receive(socket, 0)
+
+  Nil
+}
+
+pub fn connection_keep_alive_test() {
+  echo_server(42_071)
+
+  let req =
+    "GET / HTTP/1.1\r\n"
+    <> "Host: localhost:42069\r\n"
+    <> "Transfer-Encoding: chunked\r\n\r\n"
+    <> "D\r\n"
+    <> "Hello, world!\r\n"
+    <> "D\r\n"
+    <> " How are you?\r\n"
+    <> "0\r\n\r\n"
+
+  use socket <- client.with_socket(port: 42_069, active: False)
+  let _ = tcp.send(socket, bytes_tree.from_string(req))
+
+  let assert Ok(<<
+    "HTTP/1.1 200 OK\r\ncontent-length: 26\r\nconnection: keep-alive\r\n\r\nHello, world! How are you?",
+  >>) = tcp.receive(socket, 0)
+
+  let _ = tcp.send(socket, bytes_tree.from_string(req))
+
+  let assert Ok(<<
+    "HTTP/1.1 200 OK\r\ncontent-length: 26\r\nconnection: keep-alive\r\n\r\nHello, world! How are you?",
+  >>) = tcp.receive(socket, 0)
 
   Nil
 }
