@@ -177,7 +177,7 @@ fn parse_headers(
 ) {
   case decoder.decode_packet(HttphBin, buffer, []) {
     Ok(Packet(HttpEoh, rest)) -> Ok(#(headers, rest))
-    Ok(Packet(HttpHeader(_idx, _atom_field, field, value), rest)) -> {
+    Ok(Packet(HttpHeader(field, value), rest)) -> {
       use field <- try(
         bit_array.to_string(field)
         |> result.map(string.lowercase)

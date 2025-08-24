@@ -175,6 +175,7 @@ pub fn start(
     fn(conn) { #(http_.transform_connection(conn), None) },
     fn(http_conn, msg, conn) {
       let assert glisten.Packet(msg) = msg
+      // NOTE: will be replaced with handler.gleam
       case http_.parse_request(http_conn, msg) {
         Ok(http_.ParsedRequest(request, version)) -> {
           let resp =

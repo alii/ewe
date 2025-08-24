@@ -4,8 +4,14 @@
 
 decode_packet(Type, Packet, Options) ->
   case erlang:decode_packet(Type, Packet, Options) of
-    {ok, HttpPacket, Rest} ->
-      {ok, {packet, HttpPacket, Rest}};
+    {ok, {http_request, Method, Uri, Version}, Rest} ->
+      {ok, {packet, {http_request, atom_to_binary(Method), Uri, Version}, Rest}};
+
+    {ok, {http_header, _, _, Field, Value}, Rest} ->
+      {ok, {packet, {http_header, Field, Value}, Rest}};
+
+    {ok, Bin, Rest} ->
+      {ok, {packet, Bin, Rest}};
 
     {more, undefined} ->
       {ok, {more, none}};
@@ -15,3 +21,5 @@ decode_packet(Type, Packet, Options) ->
     {error, Reason} ->
       {error, Reason}
   end.
+
+% TODO: Implement exception catching
