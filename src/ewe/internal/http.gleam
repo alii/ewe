@@ -2,6 +2,7 @@ import ewe/internal/decoder.{
   AbsPath, HttpBin, HttpEoh, HttpHeader, HttpRequest, HttphBin, More, Packet,
 }
 import gleam/bit_array
+import gleam/bool
 import gleam/bytes_tree
 import gleam/dict.{type Dict}
 import gleam/erlang/atom
@@ -26,6 +27,7 @@ pub type ParseError {
   MissingHost
 
   InvalidBody
+  BodyTooLarge
 
   // ???
   PacketLoss
@@ -210,6 +212,7 @@ fn parse_headers(
 
 pub fn read_body(
   req: Request(Connection),
+  size_limit: Int,
 ) -> Result(Request(BitArray), ParseError) {
   let transfer_encoding =
     request.get_header(req, "transfer-encoding")
@@ -217,14 +220,14 @@ pub fn read_body(
 
   case transfer_encoding {
     Ok("chunked") -> {
-      use body <- try(
-        read_chunked_body(
-          req.body.transport,
-          req.body.socket,
-          req.body.buffer,
-          <<>>,
-        ),
-      )
+      use body <- try(read_chunked_body(
+        req.body.transport,
+        req.body.socket,
+        req.body.buffer,
+        <<>>,
+        size_limit,
+        0,
+      ))
 
       Ok(request.set_body(req, body))
     }
@@ -233,6 +236,8 @@ pub fn read_body(
         request.get_header(req, "content-length")
         |> try(int.parse)
         |> result.unwrap(0)
+
+      use <- bool.guard(content_length > size_limit, Error(BodyTooLarge))
 
       let left = content_length - bit_array.byte_size(req.body.buffer)
 
@@ -258,7 +263,11 @@ pub fn read_chunked_body(
   socket: socket.Socket,
   buffer: BitArray,
   body: BitArray,
+  size_limit: Int,
+  total_size: Int,
 ) -> Result(BitArray, ParseError) {
+  use <- bool.guard(total_size > size_limit, Error(BodyTooLarge))
+
   case parse_body_chunk(buffer) {
     Ok(Done) -> Ok(body)
     Ok(Incomplete) -> {
@@ -270,12 +279,13 @@ pub fn read_chunked_body(
         on_error: InvalidBody,
       ))
 
-      read_chunked_body(transport, socket, buffer, body)
+      read_chunked_body(transport, socket, buffer, body, size_limit, total_size)
     }
     Ok(Chunk(chunk, rest)) -> {
       let body = <<body:bits, chunk:bits>>
+      let total_size = total_size + bit_array.byte_size(chunk)
 
-      read_chunked_body(transport, socket, rest, body)
+      read_chunked_body(transport, socket, rest, body, size_limit, total_size)
     }
     Error(error) -> Error(error)
   }

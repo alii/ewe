@@ -18,7 +18,7 @@ pub fn echo_server(port: Int) {
         use req <- result.try(
           response.new(400)
           |> response.set_body(bytes_tree.new())
-          |> result.replace_error(ewe.read_body(req), _),
+          |> result.replace_error(ewe.read_body(req, 1024), _),
         )
 
         response.new(200)
@@ -28,9 +28,9 @@ pub fn echo_server(port: Int) {
 
       result.unwrap_both(resp)
     })
-    |> ewe.port(port)
-    // |> ewe.bind_all()
-    // |> ewe.ipv6()
+    |> ewe.with_port(port)
+    |> ewe.bind_all()
+    |> ewe.with_ipv6()
     |> ewe.start()
 
   Nil
@@ -99,9 +99,12 @@ pub fn request_chunked_test() {
 pub fn connection_keep_alive_test() {
   echo_server(42_071)
 
-  let req =
-    "GET / HTTP/1.1\r\n"
-    <> "Host: localhost:42069\r\n"
+  let req = "GET / HTTP/1.1\r\n" <> "Host: localhost:42069\r\n"
+
+  let normal = req <> "Content-Length: 9\r\n\r\nPing Pong"
+
+  let chunked =
+    req
     <> "Transfer-Encoding: chunked\r\n\r\n"
     <> "D\r\n"
     <> "Hello, world!\r\n"
@@ -110,13 +113,13 @@ pub fn connection_keep_alive_test() {
     <> "0\r\n\r\n"
 
   use socket <- client.with_socket(port: 42_069, active: False)
-  let _ = tcp.send(socket, bytes_tree.from_string(req))
+  let _ = tcp.send(socket, bytes_tree.from_string(normal))
 
   let assert Ok(<<
-    "HTTP/1.1 200 OK\r\ncontent-length: 26\r\nconnection: keep-alive\r\n\r\nHello, world! How are you?",
+    "HTTP/1.1 200 OK\r\ncontent-length: 9\r\nconnection: keep-alive\r\n\r\nPing Pong",
   >>) = tcp.receive(socket, 0)
 
-  let _ = tcp.send(socket, bytes_tree.from_string(req))
+  let _ = tcp.send(socket, bytes_tree.from_string(chunked))
 
   let assert Ok(<<
     "HTTP/1.1 200 OK\r\ncontent-length: 26\r\nconnection: keep-alive\r\n\r\nHello, world! How are you?",

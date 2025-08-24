@@ -1,8 +1,9 @@
-import ewe/internal/http as http_
 import gleam/bytes_tree
 import gleam/http/response
 import gleam/int
 import gleam/list
+
+import ewe/internal/http as http_
 
 pub fn append_default_headers(
   resp: response.Response(bytes_tree.BytesTree),
