@@ -1,6 +1,6 @@
 # (⚠️ WIP) 🐑 ewe
 
-ewe [/juː/] - fluffy package for building web servers. Heavily inspired by [mist](https://github.com/rawhat/mist).
+ewe [/juː/] - fluffy package for building web servers. Inspired by [mist](https://github.com/rawhat/mist).
 
 [![Package Version](https://img.shields.io/hexpm/v/ewe)](https://hex.pm/packages/ewe)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/ewe/)

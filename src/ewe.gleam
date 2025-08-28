@@ -1,8 +1,8 @@
-import gleam/bytes_tree
+import gleam/bytes_tree.{type BytesTree}
 import gleam/erlang/process
 import gleam/http
 import gleam/http/request.{type Request}
-import gleam/http/response
+import gleam/http/response.{type Response}
 import gleam/int
 import gleam/io
 import gleam/option.{type Option, None, Some}
@@ -21,7 +21,7 @@ import ewe/internal/handler as handler_
 import ewe/internal/http as http_
 import ewe/internal/info as info_
 
-// IMPORTS ---------------------------------------------------------------------
+// CONNECTION ------------------------------------------------------------------
 
 /// Represents a connection between a client and a server, stored inside a
 /// `Request`. Can be converted to a `BitArray` using `ewe.read_body`.
@@ -115,13 +115,13 @@ pub fn get_server_info(
 /// 
 pub opaque type Builder(body) {
   Builder(
-    handler: fn(Request(body)) -> response.Response(bytes_tree.BytesTree),
+    handler: fn(Request(body)) -> Response(BytesTree),
     port: Int,
     interface: String,
     ipv6: Bool,
     tls: Option(#(String, String)),
     on_start: fn(ServerInfo) -> Nil,
-    on_crash: response.Response(bytes_tree.BytesTree),
+    on_crash: Response(BytesTree),
     info_worker_name: process.Name(info_.Message(ServerInfo)),
   )
 }
@@ -137,9 +137,7 @@ pub opaque type Builder(body) {
 /// - on_start: prints `Listening on <scheme>://<ip_address>:<port>`
 /// - on_crash: empty 500 response
 /// 
-pub fn new(
-  handler: fn(Request(body)) -> response.Response(bytes_tree.BytesTree),
-) -> Builder(body) {
+pub fn new(handler: fn(Request(body)) -> Response(BytesTree)) -> Builder(body) {
   Builder(
     handler:,
     port: 8080,
@@ -239,7 +237,7 @@ pub fn on_start(
 /// 
 pub fn on_crash(
   builder: Builder(body),
-  on_crash: response.Response(bytes_tree.BytesTree),
+  on_crash: Response(BytesTree),
 ) -> Builder(body) {
   Builder(..builder, on_crash:)
 }
@@ -348,7 +346,7 @@ pub fn read_body(
 pub fn with_read_body(
   builder: Builder(BitArray),
   size_limit: Int,
-  on_failure: fn(BodyError) -> response.Response(bytes_tree.BytesTree),
+  on_failure: fn(BodyError) -> Response(BytesTree),
 ) -> Builder(Connection) {
   let handler = fn(req) {
     case read_body(req, size_limit) {
@@ -367,9 +365,9 @@ pub fn with_read_body(
 /// charset=utf-8` and `content-length` headers.
 /// 
 pub fn json(
-  response: response.Response(a),
+  response: Response(a),
   json: string_tree.StringTree,
-) -> response.Response(bytes_tree.BytesTree) {
+) -> Response(BytesTree) {
   let content_length = string_tree.byte_size(json) |> int.to_string()
   let body = bytes_tree.from_string_tree(json)
 
@@ -381,10 +379,7 @@ pub fn json(
 /// Sets response body to a text, sets `content-type` to
 /// `text/plain; charset=utf-8` and `content-length` headers.
 /// 
-pub fn text(
-  response: response.Response(a),
-  text: String,
-) -> response.Response(bytes_tree.BytesTree) {
+pub fn text(response: Response(a), text: String) -> Response(BytesTree) {
   let content_length = string.byte_size(text) |> int.to_string()
   let body = bytes_tree.from_string(text)
 
@@ -396,10 +391,7 @@ pub fn text(
 /// Sets response body to a bytes, sets `content-length` header. Doesn't set
 /// `content-type` header.
 /// 
-pub fn bytes(
-  response: response.Response(a),
-  bytes: bytes_tree.BytesTree,
-) -> response.Response(bytes_tree.BytesTree) {
+pub fn bytes(response: Response(a), bytes: BytesTree) -> Response(BytesTree) {
   let content_length = bytes_tree.byte_size(bytes) |> int.to_string()
 
   response.set_body(response, bytes)
