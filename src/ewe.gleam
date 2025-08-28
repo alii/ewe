@@ -1,6 +1,8 @@
+import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http
 import gleam/http/request.{type Request}
+import gleam/http/response
 import gleam/int
 import gleam/io
 import gleam/option.{type Option, None, Some}
@@ -13,8 +15,9 @@ import glisten/socket/options as glisten_options
 import glisten/transport
 
 import ewe/internal/file as file_
+import ewe/internal/handler as handler_
 import ewe/internal/http as http_
-import ewe/internal/response as response_
+import ewe/internal/info as info_
 
 /// Represents a connection between a client and a server, stored inside a `Request`.
 /// Can be converted to a `BitArray` using `ewe.read_body`.
@@ -34,12 +37,19 @@ pub fn ip_address_to_string(address: IpAddress) -> String {
 }
 
 /// Performs an attempt to get the client's IP address and port.
-pub fn client_stats(connection: Connection) -> Result(#(IpAddress, Int), Nil) {
+pub fn get_client_info(connection: Connection) -> Result(#(IpAddress, Int), Nil) {
   transport.peername(connection.transport, connection.socket)
   |> result.map(fn(tuple) {
     let #(ip, port) = tuple
     #(glisten_options_to_ewe_ip(ip), port)
   })
+}
+
+/// Retrieves server's information. Requires the same name as the one used in `ewe.with_name` and server to be started. Otherwise, will crash the program.
+pub fn get_server_info(
+  name: process.Name(info_.Message(ServerInfo)),
+) -> Result(ServerInfo, Nil) {
+  info_.get(process.named_subject(name))
 }
 
 fn glisten_to_ewe_ip(ip: glisten.IpAddress) -> IpAddress {
@@ -71,9 +81,12 @@ fn ewe_to_glisten_ip(ip: IpAddress) -> glisten.IpAddress {
 /// - `ewe.bind`
 /// - `ewe.bind_all`
 /// - `ewe.with_port`
+/// - `ewe.with_random_port`
 /// - `ewe.with_ipv6`
 /// - `ewe.with_tls`
+/// - `ewe.with_name`
 /// - `ewe.on_start`
+/// - `ewe.on_crash`
 pub opaque type Builder {
   Builder(
     handler: http_.Handler,
@@ -81,8 +94,15 @@ pub opaque type Builder {
     interface: String,
     ipv6: Bool,
     tls: Option(#(String, String)),
-    on_start: fn(http.Scheme, IpAddress, Int) -> Nil,
+    on_start: fn(ServerInfo) -> Nil,
+    on_crash: response.Response(bytes_tree.BytesTree),
+    info_worker_name: process.Name(info_.Message(ServerInfo)),
   )
+}
+
+/// Represents started server's information. Can be retrieved using `ewe.get_server_info`.
+pub type ServerInfo {
+  ServerInfo(scheme: http.Scheme, ip_address: IpAddress, port: Int)
 }
 
 /// Creates new server builder with handler provided.
@@ -92,7 +112,9 @@ pub opaque type Builder {
 /// - interface: `127.0.0.1`
 /// - No ipv6 support
 /// - No TLS support
+/// - Default process name for server information retrieval
 /// - on_start: prints `Listening on <scheme>://<ip_address>:<port>`
+/// - on_crash: empty 500 response
 pub fn new(handler: http_.Handler) -> Builder {
   Builder(
     handler:,
@@ -100,21 +122,23 @@ pub fn new(handler: http_.Handler) -> Builder {
     interface: "127.0.0.1",
     ipv6: False,
     tls: None,
-    on_start: fn(scheme, ip_address, port) {
-      let address = case ip_address {
-        IpV6(..) -> "[" <> ip_address_to_string(ip_address) <> "]"
-        IpV4(..) -> ip_address_to_string(ip_address)
+    on_start: fn(server) {
+      let address = case server.ip_address {
+        IpV6(..) -> "[" <> ip_address_to_string(server.ip_address) <> "]"
+        IpV4(..) -> ip_address_to_string(server.ip_address)
       }
 
       let url =
-        http.scheme_to_string(scheme)
+        http.scheme_to_string(server.scheme)
         <> "://"
         <> address
         <> ":"
-        <> int.to_string(port)
+        <> int.to_string(server.port)
 
       io.println("Listening on " <> url)
     },
+    on_crash: response.new(500) |> response.set_body(bytes_tree.new()),
+    info_worker_name: process.new_name("ewe_server_info"),
   )
 }
 
@@ -131,6 +155,11 @@ pub fn bind_all(builder: Builder) -> Builder {
 /// Sets listening port for server.
 pub fn with_port(builder: Builder, port: Int) -> Builder {
   Builder(..builder, port:)
+}
+
+/// Sets listening port for server to a random port. Useful for testing.
+pub fn with_random_port(builder: Builder) -> Builder {
+  Builder(..builder, port: 0)
 }
 
 /// Enables IPv6 support.
@@ -157,12 +186,25 @@ pub fn with_tls(
   Builder(..builder, tls: Some(#(cert, key)))
 }
 
-/// Sets a custom handler that will be called after server starts.
-pub fn on_start(
+/// Sets a custom process name for server information retrieval, allowing to use `ewe.get_server_info` after server starts.
+pub fn with_name(
   builder: Builder,
-  on_start: fn(http.Scheme, IpAddress, Int) -> Nil,
+  name: process.Name(info_.Message(ServerInfo)),
 ) -> Builder {
+  Builder(..builder, info_worker_name: name)
+}
+
+/// Sets a custom handler that will be called after server starts.
+pub fn on_start(builder: Builder, on_start: fn(ServerInfo) -> Nil) -> Builder {
   Builder(..builder, on_start:)
+}
+
+/// Sets a custom response that will be sent when server crashes.
+pub fn on_crash(
+  builder: Builder,
+  on_crash: response.Response(bytes_tree.BytesTree),
+) -> Builder {
+  Builder(..builder, on_crash:)
 }
 
 /// Starts the server.
@@ -171,54 +213,57 @@ pub fn start(
 ) -> Result(actor.Started(supervisor.Supervisor), actor.StartError) {
   let name = process.new_name("ewe_glisten")
 
-  glisten.new(
-    fn(conn) { #(http_.transform_connection(conn), None) },
-    fn(http_conn, msg, conn) {
-      let assert glisten.Packet(msg) = msg
-      // NOTE: will be replaced with handler.gleam
-      case http_.parse_request(http_conn, msg) {
-        Ok(http_.ParsedRequest(request, version)) -> {
-          let resp =
-            builder.handler(request)
-            |> response_.append_default_headers(version)
-            |> response_.encode()
+  let worker_name = builder.info_worker_name
+  let subject = process.named_subject(worker_name)
+  let info_worker = info_.start_worker(worker_name)
 
-          case transport.send(conn.transport, conn.socket, resp) {
-            Ok(Nil) -> glisten.continue(http_conn)
-            Error(_) -> glisten.stop()
-          }
-        }
-        Error(_) -> glisten.stop()
+  let glisten_supervisor =
+    glisten.new(
+      fn(conn) { #(http_.transform_connection(conn), None) },
+      handler_.loop(builder.handler, builder.on_crash),
+    )
+    |> glisten.bind(builder.interface)
+    |> fn(glisten_builder) {
+      case builder.ipv6 {
+        True -> glisten.with_ipv6(glisten_builder)
+        False -> glisten_builder
       }
-    },
-  )
-  |> glisten.bind(builder.interface)
-  |> fn(glisten_builder) {
-    case builder.ipv6 {
-      True -> glisten.with_ipv6(glisten_builder)
-      False -> glisten_builder
     }
-  }
-  |> fn(glisten_builder) {
-    case builder.tls {
-      Some(#(cert, key)) -> glisten.with_tls(glisten_builder, cert, key)
-      None -> glisten_builder
+    |> fn(glisten_builder) {
+      case builder.tls {
+        Some(#(cert, key)) -> glisten.with_tls(glisten_builder, cert, key)
+        None -> glisten_builder
+      }
     }
-  }
-  // https://github.com/rawhat/glisten/blob/master/src/glisten.gleam#L359
-  |> glisten.start_with_listener_name(builder.port, name)
-  |> result.map(fn(started) {
-    let scheme = case builder.tls {
-      Some(#(_, _)) -> http.Https
-      None -> http.Http
-    }
-    let server_info = glisten.get_server_info(name, 10_000)
-    let ip_address = glisten_to_ewe_ip(server_info.ip_address)
+    // https://github.com/rawhat/glisten/blob/master/src/glisten.gleam#L359
+    |> glisten.start_with_listener_name(builder.port, name)
+    |> result.map(fn(started) {
+      let scheme = case builder.tls {
+        Some(#(_, _)) -> http.Https
+        None -> http.Http
+      }
 
-    builder.on_start(scheme, ip_address, server_info.port)
+      let server_info = glisten.get_server_info(name, 10_000)
+      let ip_address = glisten_to_ewe_ip(server_info.ip_address)
 
-    started
-  })
+      let server =
+        ServerInfo(
+          scheme: scheme,
+          ip_address: ip_address,
+          port: server_info.port,
+        )
+
+      info_.set(subject, server)
+
+      started
+    })
+
+  let glisten_child = supervision.supervisor(fn() { glisten_supervisor })
+
+  supervisor.new(supervisor.OneForAll)
+  |> supervisor.add(glisten_child)
+  |> supervisor.add(info_worker)
+  |> supervisor.start()
 }
 
 /// Creates a supervisor that can be appended to a supervision tree.

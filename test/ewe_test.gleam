@@ -1,10 +1,15 @@
-// TODO: Add more tests
+// TODO: Add more PROPER tests
 
 import client/tcp as client
 import ewe
 import gleam/bytes_tree
 import gleam/erlang/process
+import gleam/http
+import gleam/http/request
 import gleam/http/response
+import gleam/httpc
+import gleam/int
+import gleam/otp/static_supervisor as supervisor
 import gleam/result
 import gleeunit
 import glisten/tcp
@@ -14,32 +19,28 @@ pub fn main() -> Nil {
 }
 
 pub fn echo_server(port: Int) {
-  let assert Ok(_) =
-    ewe.new(fn(req) {
-      let resp = {
-        use req <- result.try(
-          response.new(400)
-          |> response.set_body(bytes_tree.new())
-          |> result.replace_error(ewe.read_body(req, 1024), _),
-        )
+  ewe.new(fn(req) {
+    let resp = {
+      use req <- result.try(
+        response.new(400)
+        |> response.set_body(bytes_tree.new())
+        |> result.replace_error(ewe.read_body(req, 1024), _),
+      )
 
-        response.new(200)
-        |> response.set_body(bytes_tree.from_bit_array(req.body))
-        |> Ok
-      }
+      response.new(200)
+      |> response.set_body(bytes_tree.from_bit_array(req.body))
+      |> Ok
+    }
 
-      result.unwrap_both(resp)
-    })
-    |> ewe.with_port(port)
-    |> ewe.bind_all()
-    |> ewe.with_ipv6()
-    |> ewe.start()
-
-  Nil
+    result.unwrap_both(resp)
+  })
+  |> ewe.with_port(port)
+  |> ewe.bind_all()
+  |> ewe.with_ipv6()
 }
 
 pub fn chunked_body_test() {
-  echo_server(42_069)
+  echo_server(42_069) |> ewe.start()
 
   let req =
     "GET / HTTP/1.1\r\n"
@@ -62,7 +63,7 @@ pub fn chunked_body_test() {
 }
 
 pub fn request_chunked_test() {
-  echo_server(42_070)
+  echo_server(42_070) |> ewe.start()
 
   let part1 = "GET / HTTP/1.1\r\n"
   let part2 = "Host: localhost:42069\r\n"
@@ -99,7 +100,7 @@ pub fn request_chunked_test() {
 }
 
 pub fn connection_keep_alive_test() {
-  echo_server(42_071)
+  echo_server(42_071) |> ewe.start()
 
   let req = "GET / HTTP/1.1\r\n" <> "Host: localhost:42069\r\n"
 
@@ -126,6 +127,36 @@ pub fn connection_keep_alive_test() {
   let assert Ok(<<
     "HTTP/1.1 200 OK\r\ncontent-length: 26\r\nconnection: keep-alive\r\n\r\nHello, world! How are you?",
   >>) = tcp.receive(socket, 0)
+
+  Nil
+}
+
+pub fn random_port_and_rescue_test() {
+  let name = process.new_name("ewe_server_info")
+
+  let supervisor = supervisor.new(supervisor.OneForOne)
+
+  let assert Ok(_) =
+    ewe.new(fn(_req) { panic as "test" })
+    |> ewe.with_name(name)
+    |> ewe.with_random_port()
+    |> ewe.supervised()
+    |> supervisor.add(supervisor, _)
+    |> supervisor.start()
+
+  let assert Ok(server_info) = ewe.get_server_info(name)
+
+  let assert Ok(req) =
+    request.to(
+      { server_info.scheme |> http.scheme_to_string }
+      <> "://"
+      <> server_info.ip_address |> ewe.ip_address_to_string
+      <> ":"
+      <> server_info.port |> int.to_string,
+    )
+
+  let assert Ok(resp) = httpc.send(req)
+  echo resp
 
   Nil
 }

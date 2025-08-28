@@ -1,6 +1,6 @@
 -module(ewe_ffi).
 
--export([decode_packet/3]).
+-export([decode_packet/3, rescue/1]).
 
 decode_packet(Type, Packet, Options) ->
   case erlang:decode_packet(Type, Packet, Options) of
@@ -21,5 +21,10 @@ decode_packet(Type, Packet, Options) ->
     {error, Reason} ->
       {error, Reason}
   end.
-
-% TODO: Implement exception catching
+rescue(Callable) ->
+  try {ok, Callable()}
+  catch
+    error:Error -> {error, {errored, Error}};
+    throw:Error -> {error, {thrown, Error}};
+    exit:Error -> {error, {exited, Error}}
+  end.
