@@ -10,6 +10,8 @@ import gleam/otp/actor
 import gleam/otp/static_supervisor as supervisor
 import gleam/otp/supervision
 import gleam/result
+import gleam/string
+import gleam/string_tree
 import glisten
 import glisten/socket/options as glisten_options
 import glisten/transport
@@ -19,37 +21,29 @@ import ewe/internal/handler as handler_
 import ewe/internal/http as http_
 import ewe/internal/info as info_
 
-/// Represents a connection between a client and a server, stored inside a `Request`.
-/// Can be converted to a `BitArray` using `ewe.read_body`.
+// IMPORTS ---------------------------------------------------------------------
+
+/// Represents a connection between a client and a server, stored inside a
+/// `Request`. Can be converted to a `BitArray` using `ewe.read_body`.
+///
 pub type Connection =
   http_.Connection
 
-/// Represents an IP address. Appears when accessing client's information (`ewe.client_stats`) or `on_start` handler (`ewe.on_start`).
+// IP ADDRESS ------------------------------------------------------------------
+
+/// Represents an IP address. Appears when accessing client's information
+/// (`ewe.client_stats`) or `on_start` handler (`ewe.on_start`).
+///
 pub type IpAddress {
   IpV4(Int, Int, Int, Int)
   IpV6(Int, Int, Int, Int, Int, Int, Int, Int)
 }
 
 /// Converts an `IpAddress` to a string for later printing.
+/// 
 pub fn ip_address_to_string(address: IpAddress) -> String {
   ewe_to_glisten_ip(address)
   |> glisten.ip_address_to_string()
-}
-
-/// Performs an attempt to get the client's IP address and port.
-pub fn get_client_info(connection: Connection) -> Result(#(IpAddress, Int), Nil) {
-  transport.peername(connection.transport, connection.socket)
-  |> result.map(fn(tuple) {
-    let #(ip, port) = tuple
-    #(glisten_options_to_ewe_ip(ip), port)
-  })
-}
-
-/// Retrieves server's information. Requires the same name as the one used in `ewe.with_name` and server to be started. Otherwise, will crash the program.
-pub fn get_server_info(
-  name: process.Name(info_.Message(ServerInfo)),
-) -> Result(ServerInfo, Nil) {
-  info_.get(process.named_subject(name))
 }
 
 fn glisten_to_ewe_ip(ip: glisten.IpAddress) -> IpAddress {
@@ -76,10 +70,41 @@ fn ewe_to_glisten_ip(ip: IpAddress) -> glisten.IpAddress {
   }
 }
 
+// INFO ------------------------------------------------------------------------
+
+/// Represents started server's information. Can be retrieved using
+/// `ewe.get_server_info`.
+/// 
+pub type ServerInfo {
+  ServerInfo(scheme: http.Scheme, ip_address: IpAddress, port: Int)
+}
+
+/// Performs an attempt to get the client's IP address and port.
+/// 
+pub fn get_client_info(connection: Connection) -> Result(#(IpAddress, Int), Nil) {
+  transport.peername(connection.transport, connection.socket)
+  |> result.map(fn(tuple) {
+    let #(ip, port) = tuple
+    #(glisten_options_to_ewe_ip(ip), port)
+  })
+}
+
+/// Retrieves server's information. Requires the same name as the one used in
+/// `ewe.with_name` and server to be started. Otherwise, will crash the program.
+/// 
+pub fn get_server_info(
+  name: process.Name(info_.Message(ServerInfo)),
+) -> Result(ServerInfo, Nil) {
+  info_.get(process.named_subject(name))
+}
+
+// BUILDER ---------------------------------------------------------------------
+
 /// Ewe's server builder. Contains all server's configuration. Can be adjusted
 /// with the following functions:
 /// - `ewe.bind`
 /// - `ewe.bind_all`
+/// - `ewe.with_read_body`
 /// - `ewe.with_port`
 /// - `ewe.with_random_port`
 /// - `ewe.with_ipv6`
@@ -87,9 +112,10 @@ fn ewe_to_glisten_ip(ip: IpAddress) -> glisten.IpAddress {
 /// - `ewe.with_name`
 /// - `ewe.on_start`
 /// - `ewe.on_crash`
-pub opaque type Builder {
+/// 
+pub opaque type Builder(body) {
   Builder(
-    handler: http_.Handler,
+    handler: fn(Request(body)) -> response.Response(bytes_tree.BytesTree),
     port: Int,
     interface: String,
     ipv6: Bool,
@@ -98,11 +124,6 @@ pub opaque type Builder {
     on_crash: response.Response(bytes_tree.BytesTree),
     info_worker_name: process.Name(info_.Message(ServerInfo)),
   )
-}
-
-/// Represents started server's information. Can be retrieved using `ewe.get_server_info`.
-pub type ServerInfo {
-  ServerInfo(scheme: http.Scheme, ip_address: IpAddress, port: Int)
 }
 
 /// Creates new server builder with handler provided.
@@ -115,7 +136,10 @@ pub type ServerInfo {
 /// - Default process name for server information retrieval
 /// - on_start: prints `Listening on <scheme>://<ip_address>:<port>`
 /// - on_crash: empty 500 response
-pub fn new(handler: http_.Handler) -> Builder {
+/// 
+pub fn new(
+  handler: fn(Request(body)) -> response.Response(bytes_tree.BytesTree),
+) -> Builder(body) {
   Builder(
     handler:,
     port: 8080,
@@ -143,36 +167,42 @@ pub fn new(handler: http_.Handler) -> Builder {
 }
 
 /// Binds server to a specific interface. Crashes program if interface is invalid.
-pub fn bind(builder: Builder, interface: String) -> Builder {
+/// 
+pub fn bind(builder: Builder(body), interface: String) -> Builder(body) {
   Builder(..builder, interface:)
 }
 
 /// Binds server to all interfaces.
-pub fn bind_all(builder: Builder) -> Builder {
+/// 
+pub fn bind_all(builder: Builder(body)) -> Builder(body) {
   Builder(..builder, interface: "0.0.0.0")
 }
 
 /// Sets listening port for server.
-pub fn with_port(builder: Builder, port: Int) -> Builder {
+/// 
+pub fn with_port(builder: Builder(body), port: Int) -> Builder(body) {
   Builder(..builder, port:)
 }
 
 /// Sets listening port for server to a random port. Useful for testing.
-pub fn with_random_port(builder: Builder) -> Builder {
+/// 
+pub fn with_random_port(builder: Builder(body)) -> Builder(body) {
   Builder(..builder, port: 0)
 }
 
 /// Enables IPv6 support.
-pub fn with_ipv6(builder: Builder) -> Builder {
+/// 
+pub fn with_ipv6(builder: Builder(body)) -> Builder(body) {
   Builder(..builder, ipv6: True)
 }
 
 /// Enables TLS support, requires certificate and key file.
+/// 
 pub fn with_tls(
-  builder: Builder,
+  builder: Builder(body),
   certificate: String,
   keyfile: String,
-) -> Builder {
+) -> Builder(body) {
   let cert = case file_.open(certificate) {
     Ok(_) -> certificate
     Error(_) -> panic as "Failed to find cert file"
@@ -186,30 +216,40 @@ pub fn with_tls(
   Builder(..builder, tls: Some(#(cert, key)))
 }
 
-/// Sets a custom process name for server information retrieval, allowing to use `ewe.get_server_info` after server starts.
+/// Sets a custom process name for server information retrieval, allowing to
+/// use `ewe.get_server_info` after server starts.
+/// 
 pub fn with_name(
-  builder: Builder,
+  builder: Builder(body),
   name: process.Name(info_.Message(ServerInfo)),
-) -> Builder {
+) -> Builder(body) {
   Builder(..builder, info_worker_name: name)
 }
 
 /// Sets a custom handler that will be called after server starts.
-pub fn on_start(builder: Builder, on_start: fn(ServerInfo) -> Nil) -> Builder {
+/// 
+pub fn on_start(
+  builder: Builder(body),
+  on_start: fn(ServerInfo) -> Nil,
+) -> Builder(body) {
   Builder(..builder, on_start:)
 }
 
 /// Sets a custom response that will be sent when server crashes.
+/// 
 pub fn on_crash(
-  builder: Builder,
+  builder: Builder(body),
   on_crash: response.Response(bytes_tree.BytesTree),
-) -> Builder {
+) -> Builder(body) {
   Builder(..builder, on_crash:)
 }
 
+// SERVER ----------------------------------------------------------------------
+
 /// Starts the server.
+/// 
 pub fn start(
-  builder: Builder,
+  builder: Builder(Connection),
 ) -> Result(actor.Started(supervisor.Supervisor), actor.StartError) {
   let name = process.new_name("ewe_glisten")
 
@@ -267,22 +307,29 @@ pub fn start(
 }
 
 /// Creates a supervisor that can be appended to a supervision tree.
+/// 
 pub fn supervised(
-  builder: Builder,
+  builder: Builder(Connection),
 ) -> supervision.ChildSpecification(supervisor.Supervisor) {
   supervision.supervisor(fn() { start(builder) })
 }
 
+// REQUEST ---------------------------------------------------------------------
+
 /// Possible errors that can occur when reading a body.
+/// 
 pub type BodyError {
   BodyTooLarge
   InvalidBody
 }
 
-/// Reads body from a request. If request body is malformed, `InvalidBody` error is returned. On success, returns a request with body converted to `BitArray`.
+/// Reads body from a request. If request body is malformed, `InvalidBody`
+/// error is returned. On success, returns a request with body converted to
+/// `BitArray`.
 /// - When `transfer-encoding` header set as `chunked`, `BodyTooLarge` error is returned if
 /// accumulated body is larger than `size_limit`.
 /// - Ensures that `content-length` is in `size_limit` scope.
+/// 
 pub fn read_body(
   req: Request(Connection),
   size_limit size_limit: Int,
@@ -292,4 +339,69 @@ pub fn read_body(
     Error(http_.BodyTooLarge) -> Error(BodyTooLarge)
     Error(_) -> Error(InvalidBody)
   }
+}
+
+/// With this option, body is read before handler is called, making request
+/// body available in handler (`Request(BitArray)`). If body is invalid or too
+/// large, `on_failure` function is called.
+/// 
+pub fn with_read_body(
+  builder: Builder(BitArray),
+  size_limit: Int,
+  on_failure: fn(BodyError) -> response.Response(bytes_tree.BytesTree),
+) -> Builder(Connection) {
+  let handler = fn(req) {
+    case read_body(req, size_limit) {
+      Ok(req) -> builder.handler(req)
+      Error(e) -> on_failure(e)
+    }
+  }
+
+  Builder(..builder, handler:)
+}
+
+// RESPONSE --------------------------------------------------------------------
+
+/// Sets response body to a JSON (use `gleam_json` package and encode using
+/// `json.to_string_tree`), sets `content-type` to `application/json;
+/// charset=utf-8` and `content-length` headers.
+/// 
+pub fn json(
+  response: response.Response(a),
+  json: string_tree.StringTree,
+) -> response.Response(bytes_tree.BytesTree) {
+  let content_length = string_tree.byte_size(json) |> int.to_string()
+  let body = bytes_tree.from_string_tree(json)
+
+  response.set_body(response, body)
+  |> response.set_header("content-type", "application/json; charset=utf-8")
+  |> response.set_header("content-length", content_length)
+}
+
+/// Sets response body to a text, sets `content-type` to
+/// `text/plain; charset=utf-8` and `content-length` headers.
+/// 
+pub fn text(
+  response: response.Response(a),
+  text: String,
+) -> response.Response(bytes_tree.BytesTree) {
+  let content_length = string.byte_size(text) |> int.to_string()
+  let body = bytes_tree.from_string(text)
+
+  response.set_body(response, body)
+  |> response.set_header("content-type", "text/plain; charset=utf-8")
+  |> response.set_header("content-length", content_length)
+}
+
+/// Sets response body to a bytes, sets `content-length` header. Doesn't set
+/// `content-type` header.
+/// 
+pub fn bytes(
+  response: response.Response(a),
+  bytes: bytes_tree.BytesTree,
+) -> response.Response(bytes_tree.BytesTree) {
+  let content_length = bytes_tree.byte_size(bytes) |> int.to_string()
+
+  response.set_body(response, bytes)
+  |> response.set_header("content-length", content_length)
 }
