@@ -1,6 +1,6 @@
 # Changelog
 
-# Unreleased
+# v0.3.0
 
 - Remove atom values from ffi's `decode_packet`.
 - Request handler is now rescued during crashes, thanks to ffi's `rescue` function.
