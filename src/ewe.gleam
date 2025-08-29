@@ -17,7 +17,7 @@ import glisten
 import glisten/socket/options as glisten_options
 import glisten/transport
 
-import gramps/websocket
+import gramps/websocket as ws
 
 import ewe/internal/file as file_
 import ewe/internal/handler as handler_
@@ -406,9 +406,10 @@ pub fn bytes(response: Response(a), bytes: BytesTree) -> Response(BytesTree) {
 
 // WEBSOCKET ------------------------------------------------------------------
 
-pub fn upgrade_websocket(req: Request(Connection)) {
-  echo "upgrade websocket"
-
+pub fn upgrade_websocket(
+  req: Request(Connection),
+  handler: fn(ws.Frame) -> websocket_.Next,
+) {
   let transport = req.body.transport
   let socket = req.body.socket
 
@@ -421,7 +422,7 @@ pub fn upgrade_websocket(req: Request(Connection)) {
     )
 
     use pid <- result.try(
-      websocket_.start(transport, socket)
+      websocket_.start(transport, socket, handler)
       |> result.replace_error(
         response.new(500) |> response.set_body(bytes_tree.new()),
       ),
@@ -440,6 +441,5 @@ pub fn upgrade_websocket(req: Request(Connection)) {
 
   result.unwrap_both(resp)
 }
-// - handle websocket messages
-// - ... [figure out later]
+// - ???
 // - actor's monitor notify about actor's death => websocket connection closed
