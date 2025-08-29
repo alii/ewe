@@ -3,31 +3,6 @@ import gleam/http/response
 import gleam/int
 import gleam/list
 
-import ewe/internal/http as http_
-
-pub fn append_default_headers(
-  resp: response.Response(bytes_tree.BytesTree),
-  version: http_.HttpVersion,
-) -> response.Response(bytes_tree.BytesTree) {
-  let body_size = bytes_tree.byte_size(resp.body)
-
-  let resp = case response.get_header(resp, "content-length") {
-    Ok(_) -> resp
-    Error(Nil) ->
-      response.set_header(resp, "content-length", int.to_string(body_size))
-  }
-
-  case version {
-    http_.Http10 -> response.set_header(resp, "connection", "close")
-    http_.Http11 -> {
-      case response.get_header(resp, "connection") {
-        Ok(_) -> resp
-        Error(Nil) -> response.set_header(resp, "connection", "keep-alive")
-      }
-    }
-  }
-}
-
 pub fn encode(
   response: response.Response(bytes_tree.BytesTree),
 ) -> bytes_tree.BytesTree {

@@ -1,6 +1,7 @@
 import ewe/internal/decoder.{
   AbsPath, HttpBin, HttpEoh, HttpHeader, HttpRequest, HttphBin, More, Packet,
 }
+import ewe/internal/response as response_
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -8,7 +9,7 @@ import gleam/dict.{type Dict}
 import gleam/erlang/atom
 import gleam/http
 import gleam/http/request.{type Request, Request}
-import gleam/http/response.{type Response}
+import gleam/http/response
 import gleam/int
 import gleam/option
 import gleam/result.{replace_error, try}
@@ -17,6 +18,7 @@ import gleam/uri
 import glisten
 import glisten/socket
 import glisten/transport
+import gramps/websocket
 
 pub type ParseError {
   InvalidMethod
@@ -38,6 +40,7 @@ pub type Connection {
     transport: transport.Transport,
     socket: socket.Socket,
     buffer: BitArray,
+    http_version: option.Option(HttpVersion),
   )
 }
 
@@ -46,11 +49,9 @@ pub fn transform_connection(connection: glisten.Connection(a)) -> Connection {
     transport: connection.transport,
     socket: connection.socket,
     buffer: <<>>,
+    http_version: option.None,
   )
 }
-
-pub type Handler =
-  fn(Request(Connection)) -> Response(bytes_tree.BytesTree)
 
 // 1MB = 1M bytes
 const max_reading_size = 1_000_000
@@ -83,14 +84,13 @@ pub type HttpVersion {
   Http11
 }
 
-pub type ParsedRequest {
-  ParsedRequest(request: Request(Connection), version: HttpVersion)
-}
-
 pub fn parse_request(
   connection: Connection,
   buffer: BitArray,
-) -> Result(ParsedRequest, ParseError) {
+) -> Result(Request(Connection), ParseError) {
+  let transport = connection.transport
+  let socket = connection.socket
+
   case decoder.decode_packet(HttpBin, buffer, []) {
     Ok(Packet(HttpRequest(atom_method, AbsPath(target), version), rest)) -> {
       // Request Line
@@ -113,14 +113,14 @@ pub fn parse_request(
 
       // Headers
       use #(headers, rest) <- try(parse_headers(
-        connection.transport,
-        connection.socket,
+        transport,
+        socket,
         rest,
         dict.new(),
       ))
 
       // Forming the request
-      let scheme = case connection.transport {
+      let scheme = case transport {
         transport.Tcp(..) -> http.Http
         transport.Ssl(..) -> http.Https
       }
@@ -138,26 +138,27 @@ pub fn parse_request(
           http.Https -> 443
         })
 
-      Ok(ParsedRequest(
-        request: Request(
-          method:,
-          headers: dict.to_list(headers),
-          body: Connection(..connection, buffer: rest),
-          scheme:,
-          host:,
-          port: option.Some(port),
-          path: uri.path,
-          query: uri.query,
+      Ok(Request(
+        method:,
+        headers: dict.to_list(headers),
+        body: Connection(
+          ..connection,
+          buffer: rest,
+          http_version: option.Some(version),
         ),
-        version:,
+        scheme:,
+        host:,
+        port: option.Some(port),
+        path: uri.path,
+        query: uri.query,
       ))
     }
     Ok(More(size)) -> {
       let read_size = option.unwrap(size, 0)
 
       use buffer <- try(read_from_socket(
-        connection.transport,
-        connection.socket,
+        transport,
+        socket,
         amount: read_size,
         buffer: connection.buffer,
         on_error: PacketLoss,
@@ -214,6 +215,9 @@ pub fn read_body(
   req: Request(Connection),
   size_limit: Int,
 ) -> Result(Request(BitArray), ParseError) {
+  let transport = req.body.transport
+  let socket = req.body.socket
+
   let transfer_encoding =
     request.get_header(req, "transfer-encoding")
     |> result.map(string.lowercase)
@@ -221,8 +225,8 @@ pub fn read_body(
   case transfer_encoding {
     Ok("chunked") -> {
       use body <- try(read_chunked_body(
-        req.body.transport,
-        req.body.socket,
+        transport,
+        socket,
         req.body.buffer,
         <<>>,
         size_limit,
@@ -246,8 +250,8 @@ pub fn read_body(
         0, _l | _cl, 0 -> Ok(req.body.buffer)
         _cl, _l ->
           read_from_socket(
-            req.body.transport,
-            req.body.socket,
+            transport,
+            socket,
             amount: left,
             buffer: req.body.buffer,
             on_error: InvalidBody,
@@ -258,7 +262,7 @@ pub fn read_body(
   }
 }
 
-pub fn read_chunked_body(
+fn read_chunked_body(
   transport: transport.Transport,
   socket: socket.Socket,
   buffer: BitArray,
@@ -297,7 +301,7 @@ pub type BodyChunk {
   Chunk(BitArray, rest: BitArray)
 }
 
-pub fn parse_body_chunk(buffer: BitArray) -> Result(BodyChunk, ParseError) {
+fn parse_body_chunk(buffer: BitArray) -> Result(BodyChunk, ParseError) {
   case split(buffer, <<"\r\n">>, []) {
     // TODO: trailers
     [<<"0">>, _] -> Ok(Done)
@@ -319,6 +323,93 @@ pub fn parse_body_chunk(buffer: BitArray) -> Result(BodyChunk, ParseError) {
       }
     }
     _ -> Ok(Incomplete)
+  }
+}
+
+pub type UpgradeWebsocketError {
+  VersionNot11OrGreater
+  MethodNotGet
+  MissingConnectionHeader
+  InvalidConnectionHeader
+  MissingUpgradeHeader
+  InvalidUpgradeHeader
+  MissingWebsocketVersion
+  MissingWebsocketKey
+}
+
+pub fn upgrade_websocket(
+  req: Request(Connection),
+  transport: transport.Transport,
+  socket: socket.Socket,
+) -> Result(Nil, UpgradeWebsocketError) {
+  let assert option.Some(http_version) = req.body.http_version
+
+  use <- bool.guard(http_version != Http11, Error(VersionNot11OrGreater))
+  use <- bool.guard(req.method != http.Get, Error(MethodNotGet))
+
+  use _ <- try(case request.get_header(req, "connection") {
+    Ok("Upgrade") -> Ok(Nil)
+    Ok(_) -> Error(InvalidConnectionHeader)
+    Error(_) -> Error(MissingConnectionHeader)
+  })
+
+  use _ <- try(case request.get_header(req, "upgrade") {
+    Ok("websocket") -> Ok(Nil)
+    Ok(_) -> Error(InvalidUpgradeHeader)
+    Error(_) -> Error(MissingUpgradeHeader)
+  })
+
+  use <- bool.guard(
+    request.get_header(req, "sec-websocket-version") == Error(Nil),
+    Error(MissingWebsocketVersion),
+  )
+
+  use key <- try(
+    request.get_header(req, "sec-websocket-key")
+    |> result.replace_error(MissingWebsocketKey),
+  )
+
+  let accept_key = websocket.parse_websocket_key(key)
+
+  // TODO: figure out what to do with extensions
+  let _extensions =
+    request.get_header(req, "sec-websocket-extensions")
+    |> result.map(string.split(_, ";"))
+    |> result.unwrap([])
+
+  let _ =
+    response.new(101)
+    |> response.set_body(bytes_tree.new())
+    |> response.set_header("connection", "upgrade")
+    |> response.set_header("upgrade", "websocket")
+    |> response.set_header("sec-websocket-accept", accept_key)
+    |> response.set_header("sec-websocket-version", "13")
+    |> response_.encode()
+    |> transport.send(transport, socket, _)
+
+  Ok(Nil)
+}
+
+pub fn append_default_headers(
+  resp: response.Response(bytes_tree.BytesTree),
+  version: HttpVersion,
+) -> response.Response(bytes_tree.BytesTree) {
+  let body_size = bytes_tree.byte_size(resp.body)
+
+  let resp = case response.get_header(resp, "content-length") {
+    Ok(_) -> resp
+    Error(Nil) ->
+      response.set_header(resp, "content-length", int.to_string(body_size))
+  }
+
+  case version {
+    Http10 -> response.set_header(resp, "connection", "close")
+    Http11 -> {
+      case response.get_header(resp, "connection") {
+        Ok(_) -> resp
+        Error(Nil) -> response.set_header(resp, "connection", "keep-alive")
+      }
+    }
   }
 }
 

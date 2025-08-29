@@ -407,26 +407,23 @@ pub fn bytes(response: Response(a), bytes: BytesTree) -> Response(BytesTree) {
 pub fn upgrade_websocket(req: Request(Connection)) {
   echo "upgrade websocket"
 
-  let assert Ok(key) = request.get_header(req, "sec-websocket-key")
+  let transport = req.body.transport
+  let socket = req.body.socket
 
-  let accept_key = websocket.parse_websocket_key(key)
+  case http_.upgrade_websocket(req, transport, socket) {
+    Ok(Nil) -> {
+      let subject = process.new_subject()
+      process.receive_forever(subject)
 
-  let assert Ok(_) =
-    response.new(101)
-    |> response.set_body(bytes_tree.new())
-    |> response.prepend_header("upgrade", "websocket")
-    |> response.prepend_header("connection", "upgrade")
-    |> response.prepend_header("sec-websocket-accept", accept_key)
-    |> response_.encode()
-    |> transport.send(req.body.transport, req.body.socket, _)
+      response.new(200) |> response.set_body(bytes_tree.new())
+    }
+    Error(e) -> {
+      echo e
 
-  let subject = process.new_subject()
-  process.receive_forever(subject)
-
-  response.new(200) |> response.set_body(bytes_tree.new())
+      response.new(400) |> response.set_body(bytes_tree.new())
+    }
+  }
 }
-// - validate request, ensure it's a websocket upgrade request
-// - send 101 response
 // - switch to websocket handling (actor?)
 // - handle websocket messages
 // - ... [figure out later]
