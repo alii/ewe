@@ -35,7 +35,10 @@ fn run(
   version: http_.HttpVersion,
 ) -> Result(Nil, socket.SocketReason) {
   exception.rescue(fn() { handler(req) })
-  |> result.map_error(fn(_) { on_crash })
+  |> result.map_error(fn(e) {
+    echo e
+    on_crash
+  })
   |> result.unwrap_both()
   |> response_.append_default_headers(version)
   |> response_.encode()

@@ -16,10 +16,13 @@ import glisten
 import glisten/socket/options as glisten_options
 import glisten/transport
 
+import gramps/websocket
+
 import ewe/internal/file as file_
 import ewe/internal/handler as handler_
 import ewe/internal/http as http_
 import ewe/internal/info as info_
+import ewe/internal/response as response_
 
 // CONNECTION ------------------------------------------------------------------
 
@@ -292,6 +295,7 @@ pub fn start(
         )
 
       info_.set(subject, server)
+      builder.on_start(server)
 
       started
     })
@@ -397,3 +401,33 @@ pub fn bytes(response: Response(a), bytes: BytesTree) -> Response(BytesTree) {
   response.set_body(response, bytes)
   |> response.set_header("content-length", content_length)
 }
+
+// WEBSOCKET ------------------------------------------------------------------
+
+pub fn upgrade_websocket(req: Request(Connection)) {
+  echo "upgrade websocket"
+
+  let assert Ok(key) = request.get_header(req, "sec-websocket-key")
+
+  let accept_key = websocket.parse_websocket_key(key)
+
+  let assert Ok(_) =
+    response.new(101)
+    |> response.set_body(bytes_tree.new())
+    |> response.prepend_header("upgrade", "websocket")
+    |> response.prepend_header("connection", "upgrade")
+    |> response.prepend_header("sec-websocket-accept", accept_key)
+    |> response_.encode()
+    |> transport.send(req.body.transport, req.body.socket, _)
+
+  let subject = process.new_subject()
+  process.receive_forever(subject)
+
+  response.new(200) |> response.set_body(bytes_tree.new())
+}
+// - validate request, ensure it's a websocket upgrade request
+// - send 101 response
+// - switch to websocket handling (actor?)
+// - handle websocket messages
+// - ... [figure out later]
+// - actor's monitor notify about actor's death => websocket connection closed
