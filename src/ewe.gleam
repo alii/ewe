@@ -1,5 +1,6 @@
 import gleam/bytes_tree.{type BytesTree}
 import gleam/erlang/process
+import gleam/function
 import gleam/http
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -23,6 +24,7 @@ import ewe/internal/handler as handler_
 import ewe/internal/http as http_
 import ewe/internal/info as info_
 import ewe/internal/response as response_
+import ewe/internal/websocket as websocket_
 
 // CONNECTION ------------------------------------------------------------------
 
@@ -410,21 +412,34 @@ pub fn upgrade_websocket(req: Request(Connection)) {
   let transport = req.body.transport
   let socket = req.body.socket
 
-  case http_.upgrade_websocket(req, transport, socket) {
-    Ok(Nil) -> {
-      let subject = process.new_subject()
-      process.receive_forever(subject)
+  let resp = {
+    use _ <- result.try(
+      http_.upgrade_websocket(req, transport, socket)
+      |> result.replace_error(
+        response.new(400) |> response.set_body(bytes_tree.new()),
+      ),
+    )
 
-      response.new(200) |> response.set_body(bytes_tree.new())
-    }
-    Error(e) -> {
-      echo e
+    use pid <- result.try(
+      websocket_.start(transport, socket)
+      |> result.replace_error(
+        response.new(500) |> response.set_body(bytes_tree.new()),
+      ),
+    )
 
-      response.new(400) |> response.set_body(bytes_tree.new())
-    }
+    let selector =
+      process.select_specific_monitor(
+        process.new_selector(),
+        process.monitor(pid),
+        function.identity,
+      )
+
+    let _ = process.selector_receive_forever(selector)
+    response.new(200) |> response.set_body(bytes_tree.new()) |> Ok
   }
+
+  result.unwrap_both(resp)
 }
-// - switch to websocket handling (actor?)
 // - handle websocket messages
 // - ... [figure out later]
 // - actor's monitor notify about actor's death => websocket connection closed
