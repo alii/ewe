@@ -16,10 +16,13 @@ gleam add ewe@0.3.0 gleam_http gleam_erlang gleam_json
 ⚠️ This package is in WIP stage, so public API will change quite often.
 
 ```gleam
-import gleam/bytes_tree.{type BytesTree}
+import gleam/bit_array
+import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
+import gleam/int
+import gleam/io
 import gleam/json
 import gleam/result
 import gleam/string_tree.{type StringTree}
@@ -31,20 +34,9 @@ fn error_json(error: String) -> StringTree {
   |> json.to_string_tree()
 }
 
-fn read_body_error_handler(e: ewe.BodyError) -> Response(BytesTree) {
-  let error_message = case e {
-    ewe.BodyTooLarge -> "Request body is too large"
-    ewe.InvalidBody -> "Invalid request body"
-  }
-
-  response.new(400)
-  |> ewe.json(error_json(error_message))
-}
-
 pub fn main() {
   let assert Ok(_) =
     ewe.new(handler)
-    |> ewe.with_read_body(1024, read_body_error_handler)
     |> ewe.on_crash(
       error_json("Something went wrong, try again later")
       |> ewe.json(response.new(500), _),
@@ -56,25 +48,56 @@ pub fn main() {
   process.sleep_forever()
 }
 
-pub fn handler(req: Request(BitArray)) -> Response(bytes_tree.BytesTree) {
+pub fn handler(req: Request(ewe.Connection)) -> Response(bytes_tree.BytesTree) {
   case request.path_segments(req) {
     ["hello", name] ->
       response.new(200)
       |> ewe.text("Hello, " <> name <> "!")
     ["echo"] -> handle_echo(req)
+    ["ws"] -> ewe.upgrade_websocket(req, handle_websocket)
     _ ->
       response.new(404)
       |> ewe.json(error_json("Not found"))
   }
 }
 
-pub fn handle_echo(req: Request(BitArray)) -> Response(bytes_tree.BytesTree) {
+pub fn handle_echo(
+  req: Request(ewe.Connection),
+) -> Response(bytes_tree.BytesTree) {
   let content_type =
     request.get_header(req, "content-type")
     |> result.unwrap("text/plain")
 
+  use <- ewe.use_expression()
+
+  use req <- result.try(
+    ewe.read_body(req, 1024)
+    |> result.replace_error(
+      response.new(400)
+      |> ewe.json(error_json("Invalid request body")),
+    ),
+  )
+
   response.new(200)
-  |> ewe.bytes(bytes_tree.from_bit_array(req.body))
+  |> ewe.bits(req.body)
   |> response.set_header("content-type", content_type)
+  |> Ok
+}
+
+pub fn handle_websocket(msg: ewe.WebsocketMessage) -> ewe.Next {
+  case msg {
+    ewe.Text("stop") -> ewe.stop()
+    ewe.Text(text) -> {
+      io.println("Received text: " <> text)
+      ewe.continue()
+    }
+    ewe.Binary(binary) -> {
+      io.println(
+        "Received binary of size: "
+        <> int.to_string(bit_array.byte_size(binary)),
+      )
+      ewe.continue()
+    }
+  }
 }
 ```

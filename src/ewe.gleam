@@ -1,3 +1,4 @@
+import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
 import gleam/erlang/process
 import gleam/http
@@ -12,14 +13,18 @@ import gleam/otp/supervision
 import gleam/result
 import gleam/string
 import gleam/string_tree
+
 import glisten
 import glisten/socket/options as glisten_options
 import glisten/transport
+
+import gramps/websocket as ws
 
 import ewe/internal/file as file_
 import ewe/internal/handler as handler_
 import ewe/internal/http as http_
 import ewe/internal/info as info_
+import ewe/internal/websocket as websocket_
 
 // CONNECTION ------------------------------------------------------------------
 
@@ -292,6 +297,7 @@ pub fn start(
         )
 
       info_.set(subject, server)
+      builder.on_start(server)
 
       started
     })
@@ -360,7 +366,7 @@ pub fn with_read_body(
 
 // RESPONSE --------------------------------------------------------------------
 
-/// Sets response body to a JSON (use `gleam_json` package and encode using
+/// Sets response body from string tree (use `gleam_json` package and encode using
 /// `json.to_string_tree`), sets `content-type` to `application/json;
 /// charset=utf-8` and `content-length` headers.
 /// 
@@ -376,7 +382,7 @@ pub fn json(
   |> response.set_header("content-length", content_length)
 }
 
-/// Sets response body to a text, sets `content-type` to
+/// Sets response body from string, sets `content-type` to
 /// `text/plain; charset=utf-8` and `content-length` headers.
 /// 
 pub fn text(response: Response(a), text: String) -> Response(BytesTree) {
@@ -388,7 +394,7 @@ pub fn text(response: Response(a), text: String) -> Response(BytesTree) {
   |> response.set_header("content-length", content_length)
 }
 
-/// Sets response body to a bytes, sets `content-length` header. Doesn't set
+/// Sets response body from bytes, sets `content-length` header. Doesn't set
 /// `content-type` header.
 /// 
 pub fn bytes(response: Response(a), bytes: BytesTree) -> Response(BytesTree) {
@@ -396,4 +402,154 @@ pub fn bytes(response: Response(a), bytes: BytesTree) -> Response(BytesTree) {
 
   response.set_body(response, bytes)
   |> response.set_header("content-length", content_length)
+}
+
+/// Sets response body from bits, sets `content-length` header. Doesn't set
+/// `content-type` header.
+/// 
+pub fn bits(response: Response(a), bits: BitArray) -> Response(BytesTree) {
+  let content_length = bit_array.byte_size(bits) |> int.to_string()
+  let body = bytes_tree.from_bit_array(bits)
+
+  response.set_body(response, body)
+  |> response.set_header("content-length", content_length)
+}
+
+// WEBSOCKET ------------------------------------------------------------------
+
+type ExitReason {
+  Normal
+  Abnormal(reason: String)
+}
+
+/// Represents instruction on how WebSocket connection should proceed.
+/// 
+/// `Continue` - continue processing the WebSocket connection.
+/// `Stop(Normal)` - stop the WebSocket connection.
+/// `Stop(Abnormal(reason))` - stop the WebSocket connection with abnormal reason.
+/// 
+pub opaque type Next {
+  Continue
+  Stop(ExitReason)
+}
+
+/// Instructs WebSocket connection to continue processing.
+/// 
+pub fn continue() -> Next {
+  Continue
+}
+
+/// Instructs WebSocket connection to stop.
+/// 
+pub fn stop() -> Next {
+  Stop(Normal)
+}
+
+/// Instructs WebSocket connection to stop with abnormal reason.
+/// 
+pub fn stop_abnormal(reason: String) -> Next {
+  Stop(Abnormal(reason))
+}
+
+fn to_internal_next(next: Next) -> websocket_.Next {
+  case next {
+    Continue -> websocket_.Continue
+    Stop(Normal) -> websocket_.Stop(websocket_.Normal)
+    Stop(Abnormal(reason)) -> websocket_.Stop(websocket_.Abnormal(reason))
+  }
+}
+
+/// Represents a WebSocket message received from the client.
+pub type WebsocketMessage {
+  Text(String)
+  Binary(BitArray)
+}
+
+fn transform_websocket_message(frame: ws.Frame) -> Result(WebsocketMessage, Nil) {
+  case frame {
+    ws.Data(ws.TextFrame(text)) ->
+      bit_array.to_string(text)
+      |> result.map(Text)
+    ws.Data(ws.BinaryFrame(binary)) -> Ok(Binary(binary))
+    _ -> Error(Nil)
+  }
+}
+
+/// Upgrade request to a WebSocket connection. If the initial request is not valid for WebSocket upgrade, 400 response is sent. Handler must return instruction on how WebSocket connection should proceed.
+///  
+pub fn upgrade_websocket(
+  req: Request(Connection),
+  handler: fn(WebsocketMessage) -> Next,
+) {
+  let handler = fn(msg) {
+    transform_websocket_message(msg)
+    |> result.map(handler)
+    |> result.unwrap(continue())
+    |> to_internal_next()
+  }
+
+  let transport = req.body.transport
+  let socket = req.body.socket
+
+  let resp = {
+    use _ <- result.try(
+      http_.upgrade_websocket(req, transport, socket)
+      |> result.replace_error(
+        response.new(400) |> response.set_body(bytes_tree.new()),
+      ),
+    )
+
+    use selector <- result.try(
+      websocket_.start(transport, socket, handler)
+      |> result.replace_error(
+        response.new(500) |> response.set_body(bytes_tree.new()),
+      ),
+    )
+
+    let _ = process.selector_receive_forever(selector)
+    response.new(200) |> response.set_body(bytes_tree.new()) |> Ok
+  }
+
+  result.unwrap_both(resp)
+}
+
+// EXPERIMENTAL ----------------------------------------------------------------
+
+/// Experimental function that simplifies error handling in handlers when working with `Result` type.
+/// 
+/// ## Example
+/// 
+/// ```gleam
+/// pub fn handle_echo(
+///   req: Request(ewe.Connection),
+/// ) -> Response(bytes_tree.BytesTree) {
+///   let content_type =
+///     request.get_header(req, "content-type")
+///     |> result.unwrap("text/plain")
+///
+///    // Start the use_expression block
+///    use <- ewe.use_expression()
+///
+///    // Now you can use result.try with use expressions
+///    // If any step fails, the error response is automatically returned
+///    use req <- result.try(
+///      ewe.read_body(req, 1024)
+///      |> result.replace_error(
+///        response.new(400)
+///        |> ewe.json(error_json("Invalid request body")),
+///      ),
+///    )
+///
+///    response.new(200)
+///    |> ewe.bits(req.body)
+///    |> response.set_header("content-type", content_type)
+///    |> Ok 
+///}
+/// ```
+///
+pub fn use_expression(
+  handler: fn() ->
+    Result(Response(bytes_tree.BytesTree), Response(bytes_tree.BytesTree)),
+) -> Response(bytes_tree.BytesTree) {
+  result.unwrap_both(handler())
 }

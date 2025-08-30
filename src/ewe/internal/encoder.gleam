@@ -3,32 +3,7 @@ import gleam/http/response
 import gleam/int
 import gleam/list
 
-import ewe/internal/http as http_
-
-pub fn append_default_headers(
-  resp: response.Response(bytes_tree.BytesTree),
-  version: http_.HttpVersion,
-) -> response.Response(bytes_tree.BytesTree) {
-  let body_size = bytes_tree.byte_size(resp.body)
-
-  let resp = case response.get_header(resp, "content-length") {
-    Ok(_) -> resp
-    Error(Nil) ->
-      response.set_header(resp, "content-length", int.to_string(body_size))
-  }
-
-  case version {
-    http_.Http10 -> response.set_header(resp, "connection", "close")
-    http_.Http11 -> {
-      case response.get_header(resp, "connection") {
-        Ok(_) -> resp
-        Error(Nil) -> response.set_header(resp, "connection", "keep-alive")
-      }
-    }
-  }
-}
-
-pub fn encode(
+pub fn encode_response(
   response: response.Response(bytes_tree.BytesTree),
 ) -> bytes_tree.BytesTree {
   bytes_tree.new()
@@ -38,7 +13,7 @@ pub fn encode(
 }
 
 fn encode_status_line(status: Int) -> BitArray {
-  let status_name = encode_status_number(status)
+  let status_name = status_to_bit_array(status)
   let status = int.to_string(status)
 
   <<"HTTP/1.1 ", status:utf8, " ", status_name:bits, "\r\n">>
@@ -55,7 +30,7 @@ fn encode_headers(headers: List(#(String, String))) -> BitArray {
   <<headers:bits, "\r\n">>
 }
 
-fn encode_status_number(status: Int) -> BitArray {
+fn status_to_bit_array(status: Int) -> BitArray {
   case status {
     100 -> <<"Continue">>
     101 -> <<"Switching Protocols">>
