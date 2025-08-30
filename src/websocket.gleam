@@ -1,19 +1,17 @@
 import ewe
-import ewe/internal/websocket as websocket_
 import gleam/erlang/process
 
 pub fn main() {
-  let _ =
+  let assert Ok(_) =
     ewe.new(fn(req) {
-      ewe.upgrade_websocket(req, fn(frame) {
-        echo frame
+      ewe.upgrade_websocket(req, fn(msg) {
+        echo msg as "handler received:"
 
-        websocket_.Continue
+        ewe.continue()
       })
     })
-    |> ewe.with_port(42_072)
+    |> ewe.with_port(42_069)
     |> ewe.bind_all()
-    |> ewe.with_ipv6()
     |> ewe.start()
 
   process.sleep_forever()

@@ -1,5 +1,11 @@
 # Changelog
 
+# Unreleased
+
+- Implement WebSocket protocol; request can be upgraded in handler using `ewe.upgrade_websocket`.
+- Every message received in WebSocket handler is `WebsocketMessages` type.
+- Handler must return `Next` type, which can be returned using `ewe.continue`, `ewe.stop`, `ewe.stop_abnormal`.
+
 # v0.3.0
 
 - Remove atom values from ffi's `decode_packet`.

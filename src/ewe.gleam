@@ -1,6 +1,6 @@
+import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
 import gleam/erlang/process
-import gleam/function
 import gleam/http
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -13,6 +13,7 @@ import gleam/otp/supervision
 import gleam/result
 import gleam/string
 import gleam/string_tree
+
 import glisten
 import glisten/socket/options as glisten_options
 import glisten/transport
@@ -23,7 +24,6 @@ import ewe/internal/file as file_
 import ewe/internal/handler as handler_
 import ewe/internal/http as http_
 import ewe/internal/info as info_
-import ewe/internal/response as response_
 import ewe/internal/websocket as websocket_
 
 // CONNECTION ------------------------------------------------------------------
@@ -406,10 +406,77 @@ pub fn bytes(response: Response(a), bytes: BytesTree) -> Response(BytesTree) {
 
 // WEBSOCKET ------------------------------------------------------------------
 
+type ExitReason {
+  Normal
+  Abnormal(reason: String)
+}
+
+/// Represents instruction on how WebSocket connection should proceed.
+/// 
+/// `Continue` - continue processing the WebSocket connection.
+/// `Stop(Normal)` - stop the WebSocket connection.
+/// `Stop(Abnormal(reason))` - stop the WebSocket connection with abnormal reason.
+/// 
+pub opaque type Next {
+  Continue
+  Stop(ExitReason)
+}
+
+/// Instructs WebSocket connection to continue processing.
+/// 
+pub fn continue() -> Next {
+  Continue
+}
+
+/// Instructs WebSocket connection to stop.
+/// 
+pub fn stop() -> Next {
+  Stop(Normal)
+}
+
+/// Instructs WebSocket connection to stop with abnormal reason.
+/// 
+pub fn stop_abnormal(reason: String) -> Next {
+  Stop(Abnormal(reason))
+}
+
+fn to_internal_next(next: Next) -> websocket_.Next {
+  case next {
+    Continue -> websocket_.Continue
+    Stop(Normal) -> websocket_.Stop(websocket_.Normal)
+    Stop(Abnormal(reason)) -> websocket_.Stop(websocket_.Abnormal(reason))
+  }
+}
+
+/// Represents a WebSocket message received from the client.
+pub type WebsocketMessage {
+  Text(String)
+  Binary(BitArray)
+}
+
+fn transform_websocket_message(frame: ws.Frame) -> Result(WebsocketMessage, Nil) {
+  case frame {
+    ws.Data(ws.TextFrame(text)) ->
+      bit_array.to_string(text)
+      |> result.map(Text)
+    ws.Data(ws.BinaryFrame(binary)) -> Ok(Binary(binary))
+    _ -> Error(Nil)
+  }
+}
+
+/// Upgrade request to a WebSocket connection. If the initial request is not valid for WebSocket upgrade, 400 response is sent. Handler must return instruction on how WebSocket connection should proceed.
+///  
 pub fn upgrade_websocket(
   req: Request(Connection),
-  handler: fn(ws.Frame) -> websocket_.Next,
+  handler: fn(WebsocketMessage) -> Next,
 ) {
+  let handler = fn(msg) {
+    transform_websocket_message(msg)
+    |> result.map(handler)
+    |> result.unwrap(continue())
+    |> to_internal_next()
+  }
+
   let transport = req.body.transport
   let socket = req.body.socket
 
@@ -421,19 +488,12 @@ pub fn upgrade_websocket(
       ),
     )
 
-    use pid <- result.try(
+    use selector <- result.try(
       websocket_.start(transport, socket, handler)
       |> result.replace_error(
         response.new(500) |> response.set_body(bytes_tree.new()),
       ),
     )
-
-    let selector =
-      process.select_specific_monitor(
-        process.new_selector(),
-        process.monitor(pid),
-        function.identity,
-      )
 
     let _ = process.selector_receive_forever(selector)
     response.new(200) |> response.set_body(bytes_tree.new()) |> Ok
@@ -441,5 +501,3 @@ pub fn upgrade_websocket(
 
   result.unwrap_both(resp)
 }
-// - ???
-// - actor's monitor notify about actor's death => websocket connection closed

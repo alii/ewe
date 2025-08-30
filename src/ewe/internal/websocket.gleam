@@ -1,16 +1,19 @@
 // TODO: compression
 
-import ewe/internal/exception
 import gleam/dynamic/decode
 import gleam/erlang/atom
 import gleam/erlang/process
+import gleam/function
 import gleam/option.{None}
 import gleam/otp/actor
 import gleam/result
 import glisten/socket
 import glisten/socket/options.{ActiveMode, Once}
 import glisten/transport
+
 import gramps/websocket as ws
+
+import ewe/internal/exception
 
 pub type ExitReason {
   Normal
@@ -105,7 +108,9 @@ fn handle_valid_packet(
   // second and third arguments are for accumulation
   let next =
     ws.aggregate_frames(frames, None, [])
+    |> echo as "aggregated frames:"
     |> result.map(loop_by_frames(_, transport, socket, handler, Continue))
+    |> echo as "`next` after looping frames:"
 
   case next {
     Ok(Continue) -> {
@@ -150,6 +155,7 @@ fn loop_by_frames(
       Stop(Normal)
     }
 
+    // Data frames
     [frame, ..rest], Continue -> {
       case exception.rescue(fn() { handler(frame) }) {
         Ok(Continue) ->
@@ -161,18 +167,25 @@ fn loop_by_frames(
   }
 }
 
-// Assigning started actor as the new socket's controlling process
 fn after_start(
   started: actor.Started(process.Subject(GlistenMessage)),
   transport: transport.Transport,
   socket: socket.Socket,
-) -> process.Pid {
+) -> process.Selector(process.Down) {
+  // Assigning started actor as the new socket's controlling process
   let assert Ok(pid) = process.subject_owner(started.data)
   let _ = transport.controlling_process(transport, socket, pid)
 
   set_socket_active_once(transport, socket)
 
-  pid
+  let selector =
+    process.select_specific_monitor(
+      process.new_selector(),
+      process.monitor(pid),
+      function.identity,
+    )
+
+  selector
 }
 
 // Controlled message delivery pattern (to receive exactly one message before reverting to passive mode)
