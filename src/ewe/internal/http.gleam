@@ -1,7 +1,6 @@
-import ewe/internal/decoder.{
-  AbsPath, HttpBin, HttpEoh, HttpHeader, HttpRequest, HttphBin, More, Packet,
-}
-import ewe/internal/encoder
+// TODO: body streaming
+// TODO: gzip?
+
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -12,15 +11,23 @@ import gleam/http
 import gleam/http/request.{type Request, Request}
 import gleam/http/response
 import gleam/int
+import gleam/list
 import gleam/option
 import gleam/result.{replace_error, try}
 import gleam/string
 import gleam/string_tree
 import gleam/uri
+
 import glisten
 import glisten/socket
 import glisten/transport
-import gramps/websocket
+
+import gramps/websocket as ws
+
+import ewe/internal/decoder.{
+  AbsPath, HttpBin, HttpEoh, HttpHeader, HttpRequest, HttphBin, More, Packet,
+}
+import ewe/internal/encoder
 
 pub type ResponseBody {
   TextData(String)
@@ -34,18 +41,22 @@ pub type ResponseBody {
 }
 
 pub type ParseError {
+  // request line
   InvalidMethod
   InvalidTarget
   InvalidVersion
 
+  // headers
   InvalidHeaders
   MissingHost
 
+  // body
   InvalidBody
   BodyTooLarge
 
-  // ???
-  PacketLoss
+  // anomalies
+  MalformedRequest
+  PacketDiscard
 }
 
 pub type Connection {
@@ -69,7 +80,7 @@ pub fn transform_connection(connection: glisten.Connection(a)) -> Connection {
 // 1MB = 1M bytes
 const max_reading_size = 1_000_000
 
-pub fn read_from_socket(
+fn read_from_socket(
   transport: transport.Transport,
   socket: socket.Socket,
   amount amount: Int,
@@ -174,12 +185,12 @@ pub fn parse_request(
         socket,
         amount: read_size,
         buffer: connection.buffer,
-        on_error: PacketLoss,
+        on_error: MalformedRequest,
       ))
 
       parse_request(connection, buffer)
     }
-    _ -> Error(PacketLoss)
+    _ -> Error(PacketDiscard)
   }
 }
 
@@ -191,20 +202,22 @@ fn parse_headers(
 ) {
   case decoder.decode_packet(HttphBin, buffer, []) {
     Ok(Packet(HttpEoh, rest)) -> Ok(#(headers, rest))
-    Ok(Packet(HttpHeader(field, value), rest)) -> {
-      use field <- try(
-        bit_array.to_string(field)
-        |> result.map(string.lowercase)
-        |> replace_error(InvalidHeaders),
-      )
+    Ok(Packet(HttpHeader(idx, field, value), rest)) -> {
+      use field <- try(case decoder.formatted_field_by_idx(idx) {
+        Ok(field) -> Ok(field)
+        Error(Nil) -> {
+          bit_array.to_string(field)
+          |> result.map(string.lowercase)
+          |> replace_error(InvalidHeaders)
+        }
+      })
 
       use value <- try(
         bit_array.to_string(value)
-        |> result.map(string.trim)
         |> replace_error(InvalidHeaders),
       )
 
-      dict.insert(headers, field, value)
+      insert_header(headers, field, value)
       |> parse_headers(transport, socket, rest, _)
     }
     Ok(More(size)) -> {
@@ -224,10 +237,41 @@ fn parse_headers(
   }
 }
 
+fn insert_header(
+  headers: Dict(String, String),
+  field: String,
+  value: String,
+) -> Dict(String, String) {
+  case field != "set-cookie" {
+    True ->
+      dict.upsert(headers, field, fn(target) {
+        case target {
+          option.Some(existing) -> existing <> ", " <> value
+          option.None -> value
+        }
+      })
+    False -> dict.insert(headers, available_cookie_key(headers, 0), value)
+  }
+}
+
+fn available_cookie_key(headers: Dict(String, String), idx: Int) -> String {
+  let key = case idx {
+    0 -> "set-cookie"
+    n -> "set-cookie-" <> int.to_string(n)
+  }
+
+  case dict.has_key(headers, key) {
+    True -> available_cookie_key(headers, idx + 1)
+    False -> key
+  }
+}
+
 pub fn read_body(
   req: Request(Connection),
   size_limit: Int,
 ) -> Result(Request(BitArray), ParseError) {
+  use _ <- try(handle_continue(req))
+
   let transport = req.body.transport
   let socket = req.body.socket
 
@@ -275,6 +319,25 @@ pub fn read_body(
   }
 }
 
+fn handle_continue(req: Request(Connection)) -> Result(Nil, ParseError) {
+  let expect =
+    req.headers
+    |> list.find(fn(tupple) {
+      tupple.0 == "expect" && string.lowercase(tupple.1) == "100-continue"
+    })
+
+  case expect {
+    Ok(_) -> {
+      response.new(100)
+      |> response.set_body(bytes_tree.new())
+      |> encoder.encode_response()
+      |> transport.send(req.body.transport, req.body.socket, _)
+      |> result.replace_error(MalformedRequest)
+    }
+    Error(Nil) -> Ok(Nil)
+  }
+}
+
 fn read_chunked_body(
   transport: transport.Transport,
   socket: socket.Socket,
@@ -308,7 +371,7 @@ fn read_chunked_body(
   }
 }
 
-pub type BodyChunk {
+type BodyChunk {
   Done
   Incomplete
   Chunk(BitArray, rest: BitArray)
@@ -382,7 +445,7 @@ pub fn upgrade_websocket(
     |> result.replace_error(MissingWebsocketKey),
   )
 
-  let accept_key = websocket.parse_websocket_key(key)
+  let accept_key = ws.parse_websocket_key(key)
 
   // TODO: figure out what to do with extensions
   let _extensions =

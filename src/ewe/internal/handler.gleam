@@ -1,17 +1,19 @@
-import ewe/internal/encoder
-import ewe/internal/exception
-import ewe/internal/http.{
-  type Connection, type ResponseBody, BitsData, BytesData, Empty, StringTreeData,
-  TextData, WebsocketConnection,
-} as http_
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response, Response}
 import gleam/option
 import gleam/result
+
 import glisten
 import glisten/transport
+
+import ewe/internal/encoder
+import ewe/internal/exception
+import ewe/internal/http.{
+  type Connection, type ResponseBody, BitsData, BytesData, Empty, StringTreeData,
+  TextData, WebsocketConnection,
+} as http_
 
 type ExitReason {
   Normal

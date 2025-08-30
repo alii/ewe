@@ -1,5 +1,12 @@
 # Changelog
 
+# Unreleased
+
+- Response body must now be of type `ResponseBody`. To set the response body, use the following functions: `ewe.text`, `ewe.bytes`, `ewe.bits`, `ewe.string_tree`, `ewe.empty`, `ewe.json`.
+- HTTP parser now handles `Expect: 100-continue`.
+- Optimize formatting of popular HTTP fields without wasting time on transforming from `BitArray` to `String`.
+- Duplicate request headers are now being combined (except `set-cookie`).
+
 # v0.4.0
 
 - Implement WebSocket protocol; request can be upgraded in handler using `ewe.upgrade_websocket`.

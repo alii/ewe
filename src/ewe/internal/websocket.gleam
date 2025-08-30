@@ -7,6 +7,7 @@ import gleam/function
 import gleam/option.{None}
 import gleam/otp/actor
 import gleam/result
+
 import glisten/socket
 import glisten/socket/options.{ActiveMode, Once}
 import glisten/transport
@@ -25,7 +26,7 @@ pub type Next {
   Stop(ExitReason)
 }
 
-pub type State {
+type State {
   // TODO: user state
   State(conn: WebsocketConnection, buffer: BitArray)
 }
@@ -34,12 +35,12 @@ pub type WebsocketConnection {
   WebsocketConnection(transport: transport.Transport, socket: socket.Socket)
 }
 
-pub type ValidGlistenMessage {
+type ValidGlistenMessage {
   Packet(BitArray)
   Close
 }
 
-pub type GlistenMessage {
+type GlistenMessage {
   Valid(ValidGlistenMessage)
   Invalid
 }
@@ -75,7 +76,7 @@ pub fn start(
   transport: transport.Transport,
   socket: socket.Socket,
   handler: fn(ws.Frame) -> Next,
-) {
+) -> Result(process.Selector(process.Down), actor.StartError) {
   actor.new_with_initialiser(1000, fn(subject) {
     let conn = WebsocketConnection(transport, socket)
     actor.initialised(State(conn, <<>>))
@@ -129,7 +130,7 @@ fn loop_by_frames(
   socket: socket.Socket,
   handler: fn(ws.Frame) -> Next,
   next: Next,
-) {
+) -> Next {
   case frames, next {
     // Early termination cases
     _, Stop(Normal) -> Stop(Normal)

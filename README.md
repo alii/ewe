@@ -1,3 +1,5 @@
+![ewe](public/banner.jpg)
+
 # (⚠️ WIP) 🐑 ewe
 
 ewe [/juː/] - fluffy package for building web servers. Inspired by [mist](https://github.com/rawhat/mist).
