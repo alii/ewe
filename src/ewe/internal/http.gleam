@@ -1,7 +1,7 @@
 import ewe/internal/decoder.{
   AbsPath, HttpBin, HttpEoh, HttpHeader, HttpRequest, HttphBin, More, Packet,
 }
-import ewe/internal/response as response_
+import ewe/internal/encoder
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -384,7 +384,7 @@ pub fn upgrade_websocket(
     |> response.set_header("upgrade", "websocket")
     |> response.set_header("sec-websocket-accept", accept_key)
     |> response.set_header("sec-websocket-version", "13")
-    |> response_.encode()
+    |> encoder.encode_response()
     |> transport.send(transport, socket, _)
 
   Ok(Nil)

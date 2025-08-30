@@ -366,7 +366,7 @@ pub fn with_read_body(
 
 // RESPONSE --------------------------------------------------------------------
 
-/// Sets response body to a JSON (use `gleam_json` package and encode using
+/// Sets response body from string tree (use `gleam_json` package and encode using
 /// `json.to_string_tree`), sets `content-type` to `application/json;
 /// charset=utf-8` and `content-length` headers.
 /// 
@@ -382,7 +382,7 @@ pub fn json(
   |> response.set_header("content-length", content_length)
 }
 
-/// Sets response body to a text, sets `content-type` to
+/// Sets response body from string, sets `content-type` to
 /// `text/plain; charset=utf-8` and `content-length` headers.
 /// 
 pub fn text(response: Response(a), text: String) -> Response(BytesTree) {
@@ -394,13 +394,24 @@ pub fn text(response: Response(a), text: String) -> Response(BytesTree) {
   |> response.set_header("content-length", content_length)
 }
 
-/// Sets response body to a bytes, sets `content-length` header. Doesn't set
+/// Sets response body from bytes, sets `content-length` header. Doesn't set
 /// `content-type` header.
 /// 
 pub fn bytes(response: Response(a), bytes: BytesTree) -> Response(BytesTree) {
   let content_length = bytes_tree.byte_size(bytes) |> int.to_string()
 
   response.set_body(response, bytes)
+  |> response.set_header("content-length", content_length)
+}
+
+/// Sets response body from bits, sets `content-length` header. Doesn't set
+/// `content-type` header.
+/// 
+pub fn bits(response: Response(a), bits: BitArray) -> Response(BytesTree) {
+  let content_length = bit_array.byte_size(bits) |> int.to_string()
+  let body = bytes_tree.from_bit_array(bits)
+
+  response.set_body(response, body)
   |> response.set_header("content-length", content_length)
 }
 
@@ -500,4 +511,45 @@ pub fn upgrade_websocket(
   }
 
   result.unwrap_both(resp)
+}
+
+// EXPERIMENTAL ----------------------------------------------------------------
+
+/// Experimental function that simplifies error handling in handlers when working with `Result` type.
+/// 
+/// ## Example
+/// 
+/// ```gleam
+/// pub fn handle_echo(
+///   req: Request(ewe.Connection),
+/// ) -> Response(bytes_tree.BytesTree) {
+///   let content_type =
+///     request.get_header(req, "content-type")
+///     |> result.unwrap("text/plain")
+///
+///    // Start the use_expression block
+///    use <- ewe.use_expression()
+///
+///    // Now you can use result.try with use expressions
+///    // If any step fails, the error response is automatically returned
+///    use req <- result.try(
+///      ewe.read_body(req, 1024)
+///      |> result.replace_error(
+///        response.new(400)
+///        |> ewe.json(error_json("Invalid request body")),
+///      ),
+///    )
+///
+///    response.new(200)
+///    |> ewe.bits(req.body)
+///    |> response.set_header("content-type", content_type)
+///    |> Ok 
+///}
+/// ```
+///
+pub fn use_expression(
+  handler: fn() ->
+    Result(Response(bytes_tree.BytesTree), Response(bytes_tree.BytesTree)),
+) -> Response(bytes_tree.BytesTree) {
+  result.unwrap_both(handler())
 }

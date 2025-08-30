@@ -3,7 +3,7 @@ import gleam/http/response
 import gleam/int
 import gleam/list
 
-pub fn encode(
+pub fn encode_response(
   response: response.Response(bytes_tree.BytesTree),
 ) -> bytes_tree.BytesTree {
   bytes_tree.new()
@@ -13,7 +13,7 @@ pub fn encode(
 }
 
 fn encode_status_line(status: Int) -> BitArray {
-  let status_name = encode_status_number(status)
+  let status_name = status_to_bit_array(status)
   let status = int.to_string(status)
 
   <<"HTTP/1.1 ", status:utf8, " ", status_name:bits, "\r\n">>
@@ -30,7 +30,7 @@ fn encode_headers(headers: List(#(String, String))) -> BitArray {
   <<headers:bits, "\r\n">>
 }
 
-fn encode_status_number(status: Int) -> BitArray {
+fn status_to_bit_array(status: Int) -> BitArray {
   case status {
     100 -> <<"Continue">>
     101 -> <<"Switching Protocols">>

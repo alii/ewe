@@ -108,9 +108,9 @@ fn handle_valid_packet(
   // second and third arguments are for accumulation
   let next =
     ws.aggregate_frames(frames, None, [])
-    |> echo as "aggregated frames:"
+    // |> echo as "aggregated frames:"
     |> result.map(loop_by_frames(_, transport, socket, handler, Continue))
-    |> echo as "`next` after looping frames:"
+  // |> echo as "`next` after looping frames:"
 
   case next {
     Ok(Continue) -> {

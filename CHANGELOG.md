@@ -3,8 +3,11 @@
 # Unreleased
 
 - Implement WebSocket protocol; request can be upgraded in handler using `ewe.upgrade_websocket`.
-- Every message received in WebSocket handler is `WebsocketMessages` type.
-- Handler must return `Next` type, which can be returned using `ewe.continue`, `ewe.stop`, `ewe.stop_abnormal`.
+- Every message received in WebSocket handler is of `WebsocketMessage` type.
+- Handler must return a `Next` type, which can be created using `ewe.continue`, `ewe.stop` and `ewe.stop_abnormal`.
+- Add `ewe.bits` for setting response body from `BitArray` type.
+- Add experimental `ewe.use_expression`.
+- Rename internal file from `response.gleam` to `encoder.gleam`, matching `decoder.gleam` file.
 
 # v0.3.0
 

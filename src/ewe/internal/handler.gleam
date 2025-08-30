@@ -1,6 +1,6 @@
+import ewe/internal/encoder
 import ewe/internal/exception
 import ewe/internal/http as http_
-import ewe/internal/response as response_
 import gleam/bytes_tree.{type BytesTree}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -37,12 +37,9 @@ fn run(
   let assert option.Some(http_version) = req.body.http_version
 
   exception.rescue(fn() { handler(req) })
-  |> result.map_error(fn(e) {
-    echo e
-    on_crash
-  })
+  |> result.map_error(fn(_e) { on_crash })
   |> result.unwrap_both()
   |> http_.append_default_headers(http_version)
-  |> response_.encode()
+  |> encoder.encode_response()
   |> transport.send(req.body.transport, req.body.socket, _)
 }
