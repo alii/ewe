@@ -104,8 +104,17 @@ pub fn get_server_info(
 }
 
 // RESPONSE --------------------------------------------------------------------
-// TODO: document types and functions
 
+/// Represents a response body. To set the response body, use the following
+/// functions: 
+/// 
+/// - `ewe.text`
+/// - `ewe.bytes`
+/// - `ewe.bits`
+/// - `ewe.string_tree`
+/// - `ewe.empty`
+/// - `ewe.json`
+/// 
 pub opaque type ResponseBody {
   TextData(String)
   BytesData(BytesTree)
@@ -164,6 +173,9 @@ pub fn bits(response: Response(a), bits: BitArray) -> Response(ResponseBody) {
   )
 }
 
+/// Sets response body from string tree, sets `content-length` header. Doesn't
+/// set `content-type` header.
+/// 
 pub fn string_tree(
   response: Response(a),
   string_tree: string_tree.StringTree,
@@ -175,13 +187,15 @@ pub fn string_tree(
   )
 }
 
+/// Sets response body to empty, sets `content-length` header to `0`.
+/// 
 pub fn empty(response: Response(a)) -> Response(ResponseBody) {
   response.set_body(response, Empty)
   |> response.set_header("content-length", "0")
 }
 
-/// Sets response body from string tree (use `gleam_json` package and encode using
-/// `json.to_string_tree`), sets `content-type` to `application/json;
+/// Sets response body from string tree (use `gleam_json` package and encode
+/// using `json.to_string_tree`), sets `content-type` to `application/json;
 /// charset=utf-8` and `content-length` headers.
 /// 
 pub fn json(
