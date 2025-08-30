@@ -1,6 +1,6 @@
 # Changelog
 
-# Unreleased
+# v0.4.0
 
 - Implement WebSocket protocol; request can be upgraded in handler using `ewe.upgrade_websocket`.
 - Every message received in WebSocket handler is of `WebsocketMessage` type.
