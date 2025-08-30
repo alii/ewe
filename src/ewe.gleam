@@ -424,9 +424,9 @@ type ExitReason {
 
 /// Represents instruction on how WebSocket connection should proceed.
 /// 
-/// `Continue` - continue processing the WebSocket connection.
-/// `Stop(Normal)` - stop the WebSocket connection.
-/// `Stop(Abnormal(reason))` - stop the WebSocket connection with abnormal reason.
+/// - continue processing the WebSocket connection.
+/// - stop the WebSocket connection.
+/// - stop the WebSocket connection with abnormal reason.
 /// 
 pub opaque type Next {
   Continue
@@ -475,7 +475,9 @@ fn transform_websocket_message(frame: ws.Frame) -> Result(WebsocketMessage, Nil)
   }
 }
 
-/// Upgrade request to a WebSocket connection. If the initial request is not valid for WebSocket upgrade, 400 response is sent. Handler must return instruction on how WebSocket connection should proceed.
+/// Upgrade request to a WebSocket connection. If the initial request is not
+/// valid for WebSocket upgrade, 400 response is sent. Handler must return
+/// instruction on how WebSocket connection should proceed.
 ///  
 pub fn upgrade_websocket(
   req: Request(Connection),
@@ -515,7 +517,8 @@ pub fn upgrade_websocket(
 
 // EXPERIMENTAL ----------------------------------------------------------------
 
-/// Experimental function that simplifies error handling in handlers when working with `Result` type.
+/// Experimental function that simplifies error handling in handlers when
+/// working with `Result` type.
 /// 
 /// ## Example
 /// 
