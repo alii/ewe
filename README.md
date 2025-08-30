@@ -17,7 +17,6 @@ gleam add ewe@0.4.0 gleam_http gleam_erlang gleam_json
 
 ```gleam
 import gleam/bit_array
-import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -48,7 +47,7 @@ pub fn main() {
   process.sleep_forever()
 }
 
-pub fn handler(req: Request(ewe.Connection)) -> Response(bytes_tree.BytesTree) {
+pub fn handler(req: Request(ewe.Connection)) -> Response(ewe.ResponseBody) {
   case request.path_segments(req) {
     ["hello", name] ->
       response.new(200)
@@ -61,9 +60,7 @@ pub fn handler(req: Request(ewe.Connection)) -> Response(bytes_tree.BytesTree) {
   }
 }
 
-pub fn handle_echo(
-  req: Request(ewe.Connection),
-) -> Response(bytes_tree.BytesTree) {
+pub fn handle_echo(req: Request(ewe.Connection)) -> Response(ewe.ResponseBody) {
   let content_type =
     request.get_header(req, "content-type")
     |> result.unwrap("text/plain")

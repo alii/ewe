@@ -7,6 +7,7 @@ import gleam/bool
 import gleam/bytes_tree
 import gleam/dict.{type Dict}
 import gleam/erlang/atom
+import gleam/erlang/process
 import gleam/http
 import gleam/http/request.{type Request, Request}
 import gleam/http/response
@@ -14,11 +15,23 @@ import gleam/int
 import gleam/option
 import gleam/result.{replace_error, try}
 import gleam/string
+import gleam/string_tree
 import gleam/uri
 import glisten
 import glisten/socket
 import glisten/transport
 import gramps/websocket
+
+pub type ResponseBody {
+  TextData(String)
+  BytesData(bytes_tree.BytesTree)
+  BitsData(BitArray)
+  StringTreeData(string_tree.StringTree)
+
+  WebsocketConnection(process.Selector(process.Down))
+
+  Empty
+}
 
 pub type ParseError {
   InvalidMethod

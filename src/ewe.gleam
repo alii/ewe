@@ -103,6 +103,95 @@ pub fn get_server_info(
   info_.get(process.named_subject(name))
 }
 
+// RESPONSE --------------------------------------------------------------------
+// TODO: document types and functions
+
+pub opaque type ResponseBody {
+  TextData(String)
+  BytesData(BytesTree)
+  BitsData(BitArray)
+  StringTreeData(string_tree.StringTree)
+
+  WebsocketConnection(process.Selector(process.Down))
+
+  Empty
+}
+
+fn transform_response_body(
+  resp: Response(ResponseBody),
+) -> Response(http_.ResponseBody) {
+  response.set_body(resp, case resp.body {
+    TextData(text) -> http_.TextData(text)
+    BytesData(bytes) -> http_.BytesData(bytes)
+    BitsData(bits) -> http_.BitsData(bits)
+    StringTreeData(string_tree) -> http_.StringTreeData(string_tree)
+    WebsocketConnection(selector) -> http_.WebsocketConnection(selector)
+    Empty -> http_.Empty
+  })
+}
+
+/// Sets response body from string, sets `content-type` to
+/// `text/plain; charset=utf-8` and `content-length` headers.
+/// 
+pub fn text(response: Response(a), text: String) -> Response(ResponseBody) {
+  response.set_body(response, TextData(text))
+  |> response.set_header("content-type", "text/plain; charset=utf-8")
+  |> response.set_header(
+    "content-length",
+    int.to_string(string.byte_size(text)),
+  )
+}
+
+/// Sets response body from bytes, sets `content-length` header. Doesn't set
+/// `content-type` header.
+/// 
+pub fn bytes(response: Response(a), bytes: BytesTree) -> Response(ResponseBody) {
+  response.set_body(response, BytesData(bytes))
+  |> response.set_header(
+    "content-length",
+    int.to_string(bytes_tree.byte_size(bytes)),
+  )
+}
+
+/// Sets response body from bits, sets `content-length` header. Doesn't set
+/// `content-type` header.
+/// 
+pub fn bits(response: Response(a), bits: BitArray) -> Response(ResponseBody) {
+  response.set_body(response, BitsData(bits))
+  |> response.set_header(
+    "content-length",
+    int.to_string(bit_array.byte_size(bits)),
+  )
+}
+
+pub fn string_tree(
+  response: Response(a),
+  string_tree: string_tree.StringTree,
+) -> Response(ResponseBody) {
+  response.set_body(response, StringTreeData(string_tree))
+  |> response.set_header(
+    "content-length",
+    int.to_string(string_tree.byte_size(string_tree)),
+  )
+}
+
+pub fn empty(response: Response(a)) -> Response(ResponseBody) {
+  response.set_body(response, Empty)
+  |> response.set_header("content-length", "0")
+}
+
+/// Sets response body from string tree (use `gleam_json` package and encode using
+/// `json.to_string_tree`), sets `content-type` to `application/json;
+/// charset=utf-8` and `content-length` headers.
+/// 
+pub fn json(
+  response: Response(a),
+  json: string_tree.StringTree,
+) -> Response(ResponseBody) {
+  string_tree(response, json)
+  |> response.set_header("content-type", "application/json; charset=utf-8")
+}
+
 // BUILDER ---------------------------------------------------------------------
 
 /// Ewe's server builder. Contains all server's configuration. Can be adjusted
@@ -120,13 +209,13 @@ pub fn get_server_info(
 /// 
 pub opaque type Builder(body) {
   Builder(
-    handler: fn(Request(body)) -> Response(BytesTree),
+    handler: fn(Request(body)) -> Response(ResponseBody),
     port: Int,
     interface: String,
     ipv6: Bool,
     tls: Option(#(String, String)),
     on_start: fn(ServerInfo) -> Nil,
-    on_crash: Response(BytesTree),
+    on_crash: Response(ResponseBody),
     info_worker_name: process.Name(info_.Message(ServerInfo)),
   )
 }
@@ -142,7 +231,9 @@ pub opaque type Builder(body) {
 /// - on_start: prints `Listening on <scheme>://<ip_address>:<port>`
 /// - on_crash: empty 500 response
 /// 
-pub fn new(handler: fn(Request(body)) -> Response(BytesTree)) -> Builder(body) {
+pub fn new(
+  handler: fn(Request(body)) -> Response(ResponseBody),
+) -> Builder(body) {
   Builder(
     handler:,
     port: 8080,
@@ -164,7 +255,7 @@ pub fn new(handler: fn(Request(body)) -> Response(BytesTree)) -> Builder(body) {
 
       io.println("Listening on " <> url)
     },
-    on_crash: response.new(500) |> response.set_body(bytes_tree.new()),
+    on_crash: response.new(500) |> response.set_body(Empty),
     info_worker_name: process.new_name("ewe_server_info"),
   )
 }
@@ -242,7 +333,7 @@ pub fn on_start(
 /// 
 pub fn on_crash(
   builder: Builder(body),
-  on_crash: Response(BytesTree),
+  on_crash: Response(ResponseBody),
 ) -> Builder(body) {
   Builder(..builder, on_crash:)
 }
@@ -256,6 +347,9 @@ pub fn start(
 ) -> Result(actor.Started(supervisor.Supervisor), actor.StartError) {
   let name = process.new_name("ewe_glisten")
 
+  let handler = fn(req) { transform_response_body(builder.handler(req)) }
+  let on_crash = transform_response_body(builder.on_crash)
+
   let worker_name = builder.info_worker_name
   let subject = process.named_subject(worker_name)
   let info_worker = info_.start_worker(worker_name)
@@ -263,7 +357,7 @@ pub fn start(
   let glisten_supervisor =
     glisten.new(
       fn(conn) { #(http_.transform_connection(conn), None) },
-      handler_.loop(builder.handler, builder.on_crash),
+      handler_.loop(handler, on_crash),
     )
     |> glisten.bind(builder.interface)
     |> fn(glisten_builder) {
@@ -352,7 +446,7 @@ pub fn read_body(
 pub fn with_read_body(
   builder: Builder(BitArray),
   size_limit: Int,
-  on_failure: fn(BodyError) -> Response(BytesTree),
+  on_failure: fn(BodyError) -> Response(ResponseBody),
 ) -> Builder(Connection) {
   let handler = fn(req) {
     case read_body(req, size_limit) {
@@ -362,57 +456,6 @@ pub fn with_read_body(
   }
 
   Builder(..builder, handler:)
-}
-
-// RESPONSE --------------------------------------------------------------------
-
-/// Sets response body from string tree (use `gleam_json` package and encode using
-/// `json.to_string_tree`), sets `content-type` to `application/json;
-/// charset=utf-8` and `content-length` headers.
-/// 
-pub fn json(
-  response: Response(a),
-  json: string_tree.StringTree,
-) -> Response(BytesTree) {
-  let content_length = string_tree.byte_size(json) |> int.to_string()
-  let body = bytes_tree.from_string_tree(json)
-
-  response.set_body(response, body)
-  |> response.set_header("content-type", "application/json; charset=utf-8")
-  |> response.set_header("content-length", content_length)
-}
-
-/// Sets response body from string, sets `content-type` to
-/// `text/plain; charset=utf-8` and `content-length` headers.
-/// 
-pub fn text(response: Response(a), text: String) -> Response(BytesTree) {
-  let content_length = string.byte_size(text) |> int.to_string()
-  let body = bytes_tree.from_string(text)
-
-  response.set_body(response, body)
-  |> response.set_header("content-type", "text/plain; charset=utf-8")
-  |> response.set_header("content-length", content_length)
-}
-
-/// Sets response body from bytes, sets `content-length` header. Doesn't set
-/// `content-type` header.
-/// 
-pub fn bytes(response: Response(a), bytes: BytesTree) -> Response(BytesTree) {
-  let content_length = bytes_tree.byte_size(bytes) |> int.to_string()
-
-  response.set_body(response, bytes)
-  |> response.set_header("content-length", content_length)
-}
-
-/// Sets response body from bits, sets `content-length` header. Doesn't set
-/// `content-type` header.
-/// 
-pub fn bits(response: Response(a), bits: BitArray) -> Response(BytesTree) {
-  let content_length = bit_array.byte_size(bits) |> int.to_string()
-  let body = bytes_tree.from_bit_array(bits)
-
-  response.set_body(response, body)
-  |> response.set_header("content-length", content_length)
 }
 
 // WEBSOCKET ------------------------------------------------------------------
@@ -482,7 +525,7 @@ fn transform_websocket_message(frame: ws.Frame) -> Result(WebsocketMessage, Nil)
 pub fn upgrade_websocket(
   req: Request(Connection),
   handler: fn(WebsocketMessage) -> Next,
-) {
+) -> Response(ResponseBody) {
   let handler = fn(msg) {
     transform_websocket_message(msg)
     |> result.map(handler)
@@ -496,20 +539,17 @@ pub fn upgrade_websocket(
   let resp = {
     use _ <- result.try(
       http_.upgrade_websocket(req, transport, socket)
-      |> result.replace_error(
-        response.new(400) |> response.set_body(bytes_tree.new()),
-      ),
+      |> result.replace_error(response.new(400) |> response.set_body(Empty)),
     )
 
     use selector <- result.try(
       websocket_.start(transport, socket, handler)
-      |> result.replace_error(
-        response.new(500) |> response.set_body(bytes_tree.new()),
-      ),
+      |> result.replace_error(response.new(500) |> response.set_body(Empty)),
     )
 
-    let _ = process.selector_receive_forever(selector)
-    response.new(200) |> response.set_body(bytes_tree.new()) |> Ok
+    response.new(500)
+    |> response.set_body(WebsocketConnection(selector))
+    |> Ok
   }
 
   result.unwrap_both(resp)
@@ -551,8 +591,7 @@ pub fn upgrade_websocket(
 /// ```
 ///
 pub fn use_expression(
-  handler: fn() ->
-    Result(Response(bytes_tree.BytesTree), Response(bytes_tree.BytesTree)),
-) -> Response(bytes_tree.BytesTree) {
+  handler: fn() -> Result(Response(ResponseBody), Response(ResponseBody)),
+) -> Response(ResponseBody) {
   result.unwrap_both(handler())
 }
