@@ -1,5 +1,6 @@
 // TODO: body streaming
 // TODO: gzip?
+// TODO: line folding?????
 
 import gleam/bit_array
 import gleam/bool
