@@ -1,3 +1,82 @@
+//// <style>
+////   .content > h4,
+////   .content > ul {
+////     display: none;
+////   }
+//// </style>
+//// <script>
+//// // https://gitlab.com/arkandos/smol/-/blob/main/src/smol.gleam?ref_type=heads
+//// (callback => document.readyState !== 'loading' ? callback() : document.addEventListener('DOMContentLoaded', callback, { once: true }))(() => {
+////   const list = document.querySelector('.sidebar > ul:last-of-type')
+////   const sortedLists = document.createDocumentFragment()
+////   const sortedMembers = document.createDocumentFragment()
+////
+////   for (const header of document.querySelectorAll('main > h4')) {
+////     sortedLists.append((() => {
+////       const node = document.createElement('h3')
+////       node.append(header.textContent)
+////       return node
+////     })())
+////     sortedMembers.append((() => {
+////       const node = document.createElement('h2')
+////       node.append(header.textContent)
+////       return node
+////     })())
+////
+////     const sortedList = document.createElement('ul')
+////     sortedLists.append(sortedList)
+////
+////     for (const anchor of header.nextElementSibling.querySelectorAll('a')) {
+////       const href = anchor.getAttribute('href')
+////       const member = document.querySelector(`.member:has(h2 > a[href="${href}"])`)
+////       const sidebar = list.querySelector(`li:has(a[href="${href}"])`)
+////       sortedList.append(sidebar)
+////       sortedMembers.append(member)
+////     }
+////   }
+////
+////   document.querySelector('.sidebar').insertBefore(sortedLists, list)
+////   document.querySelector('.module-members:has(#module-values)').insertBefore(sortedMembers, document.querySelector('#module-values').nextSibling)
+//// })
+//// </script>
+//// #### IP Address
+//// - [ip_address_to_string](#ip_address_to_string)
+//// #### Information
+//// - [get_client_info](#get_client_info)
+//// - [get_server_info](#get_server_info)
+//// #### Builder
+//// - [new](#new)
+//// - [bind](#bind)
+//// - [bind_all](#bind_all)
+//// - [with_port](#with_port)
+//// - [with_random_port](#with_random_port)
+//// - [with_ipv6](#with_ipv6)
+//// - [with_tls](#with_tls)
+//// - [with_name](#with_name)
+//// - [on_start](#on_start)
+//// - [on_crash](#on_crash)
+//// #### Server
+//// - [start](#start)
+//// - [supervised](#supervised)
+//// #### Request
+//// - [read_body](#read_body)
+//// #### Response
+//// - [text](#text)
+//// - [bytes](#bytes)
+//// - [bits](#bits)
+//// - [string_tree](#string_tree)
+//// - [empty](#empty)
+//// - [json](#json)
+//// #### Websocket
+//// - [upgrade_websocket](#upgrade_websocket)
+//// - [send_binary_frame](#send_binary_frame)
+//// - [send_text_frame](#send_text_frame)
+//// - [continue](#continue)
+//// - [stop](#stop)
+//// - [stop_abnormal](#stop_abnormal)
+//// #### Experimental
+//// - [use_expression](#use_expression)
+
 import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
 import gleam/erlang/process
@@ -453,7 +532,7 @@ pub fn read_body(
   }
 }
 
-// WEBSOCKET ------------------------------------------------------------------
+// WEBSOCKET -------------------------------------------------------------------
 
 pub type WebsocketConnection =
   websocket_.WebsocketConnection

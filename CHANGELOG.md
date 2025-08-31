@@ -4,6 +4,9 @@
 
 - HTTP parser now handles trailers when working with chunked encoding.
 - Remove `ewe.with_read_body`, leaving `ewe.read_body` as the only option to read the body.
+- Improve documentation page by adding headers for each logical section (see [smol](https://gitlab.com/arkandos/smol/-/blob/main/src/smol.gleam?ref_type=heads)).
+- Improve WebSockets. Users can now specify state with `on_init` function. WebSocket handler accepts connection, user's state and message. `ewe.continue` requires user to specify new state.
+- Add `ewe.send_binary_frame` and `ewe.send_text_frame`, allowing to send messages back to the client.
 
 # v0.5.0
 
