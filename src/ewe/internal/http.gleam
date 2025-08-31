@@ -15,6 +15,7 @@ import gleam/int
 import gleam/list
 import gleam/option
 import gleam/result.{replace_error, try}
+import gleam/set
 import gleam/string
 import gleam/string_tree
 import gleam/uri
@@ -282,7 +283,7 @@ pub fn read_body(
 
   case transfer_encoding {
     Ok("chunked") -> {
-      use body <- try(read_chunked_body(
+      use #(body, rest) <- try(read_chunked_body(
         transport,
         socket,
         req.body.buffer,
@@ -291,7 +292,21 @@ pub fn read_body(
         0,
       ))
 
-      Ok(request.set_body(req, body))
+      let req = request.set_body(req, body)
+
+      case list.key_find(req.headers, "trailer") {
+        Ok(trailer) -> {
+          let set =
+            trailer
+            |> string.split(",")
+            |> list.fold(set.new(), fn(set, field) {
+              set.insert(set, string.trim(field) |> string.lowercase())
+            })
+
+          Ok(handle_trailers(req, set, rest))
+        }
+        Error(Nil) -> Ok(req)
+      }
     }
     _ -> {
       let content_length =
@@ -346,11 +361,11 @@ fn read_chunked_body(
   body: BitArray,
   size_limit: Int,
   total_size: Int,
-) -> Result(BitArray, ParseError) {
+) -> Result(#(BitArray, BitArray), ParseError) {
   use <- bool.guard(total_size > size_limit, Error(BodyTooLarge))
 
   case parse_body_chunk(buffer) {
-    Ok(Done) -> Ok(body)
+    Ok(Done(rest)) -> Ok(#(body, rest))
     Ok(Incomplete) -> {
       use buffer <- try(read_from_socket(
         transport,
@@ -373,15 +388,14 @@ fn read_chunked_body(
 }
 
 type BodyChunk {
-  Done
+  Done(rest: BitArray)
   Incomplete
   Chunk(BitArray, rest: BitArray)
 }
 
 fn parse_body_chunk(buffer: BitArray) -> Result(BodyChunk, ParseError) {
   case split(buffer, <<"\r\n">>, []) {
-    // TODO: trailers
-    [<<"0">>, _] -> Ok(Done)
+    [<<"0">>, rest] -> Ok(Done(rest))
     [chunk_size, rest] -> {
       use size <- try(
         bit_array.to_string(chunk_size)
@@ -400,6 +414,59 @@ fn parse_body_chunk(buffer: BitArray) -> Result(BodyChunk, ParseError) {
       }
     }
     _ -> Ok(Incomplete)
+  }
+}
+
+fn handle_trailers(
+  req: Request(BitArray),
+  set: set.Set(String),
+  rest: BitArray,
+) -> Request(BitArray) {
+  case decoder.decode_packet(HttphBin, rest, []) {
+    Ok(Packet(HttpEoh, _)) -> req
+    Ok(Packet(HttpHeader(idx, field, value), rest)) -> {
+      let field = case decoder.formatted_field_by_idx(idx) {
+        Ok(field) -> Ok(field)
+        Error(Nil) -> {
+          bit_array.to_string(field)
+          |> result.map(string.lowercase)
+        }
+      }
+
+      case field {
+        Ok(field) -> {
+          case set.contains(set, field) && !is_forbidden_trailer(field) {
+            True -> {
+              case bit_array.to_string(value) {
+                Ok(value) -> {
+                  request.set_header(req, field, value)
+                  |> handle_trailers(set, rest)
+                }
+                Error(Nil) -> handle_trailers(req, set, rest)
+              }
+            }
+            False -> handle_trailers(req, set, rest)
+          }
+        }
+        Error(Nil) -> handle_trailers(req, set, rest)
+      }
+    }
+    _ -> req
+  }
+}
+
+fn is_forbidden_trailer(field: String) -> Bool {
+  case string.lowercase(field) {
+    "transfer-encoding"
+    | "content-length"
+    | "host"
+    | "cache-control"
+    | "expect"
+    | "max-forwards"
+    | "pragma"
+    | "range"
+    | "te" -> True
+    _ -> False
   }
 }
 

@@ -1,4 +1,4 @@
-![ewe](public/banner.jpg)
+![ewe](https://raw.githubusercontent.com/vshakitskiy/ewe/mistress/public/banner.jpg)
 
 # (⚠️ WIP) 🐑 ewe
 

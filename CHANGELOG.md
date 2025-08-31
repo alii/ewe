@@ -1,5 +1,9 @@
 # Changelog
 
+# Unreleased
+
+- HTTP parser now handles trailers when handling chunked encoding.
+
 # v0.5.0
 
 - Response body must now be of type `ResponseBody`. To set the response body, use the following functions: `ewe.text`, `ewe.bytes`, `ewe.bits`, `ewe.string_tree`, `ewe.empty`, `ewe.json`.
