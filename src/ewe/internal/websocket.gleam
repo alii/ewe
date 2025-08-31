@@ -8,6 +8,7 @@ import gleam/option.{None}
 import gleam/otp/actor
 import gleam/result
 
+import glisten
 import glisten/socket
 import glisten/socket/options.{ActiveMode, Once}
 import glisten/transport
@@ -21,14 +22,14 @@ pub type ExitReason {
   Abnormal(reason: String)
 }
 
-pub type Next {
-  Continue
+pub type Next(user_state) {
+  Continue(user_state)
   Stop(ExitReason)
 }
 
-type State {
+type State(user_state) {
   // TODO: user state
-  State(conn: WebsocketConnection, buffer: BitArray)
+  State(conn: WebsocketConnection, user_state: user_state, buffer: BitArray)
 }
 
 pub type WebsocketConnection {
@@ -75,11 +76,15 @@ const malformed_message_error = "Received malformed message"
 pub fn start(
   transport: transport.Transport,
   socket: socket.Socket,
-  handler: fn(ws.Frame) -> Next,
+  on_init: fn(WebsocketConnection) -> user_state,
+  handler: fn(WebsocketConnection, user_state, ws.Frame) -> Next(user_state),
 ) -> Result(process.Selector(process.Down), actor.StartError) {
   actor.new_with_initialiser(1000, fn(subject) {
     let conn = WebsocketConnection(transport, socket)
-    actor.initialised(State(conn, <<>>))
+
+    let user_state = on_init(conn)
+
+    actor.initialised(State(conn, user_state, <<>>))
     |> actor.selecting(glisten_selector())
     |> actor.returning(subject)
     |> Ok
@@ -97,12 +102,12 @@ pub fn start(
 }
 
 fn handle_valid_packet(
-  state: State,
+  state: State(user_state),
   data: BitArray,
   transport: transport.Transport,
   socket: socket.Socket,
-  handler: fn(ws.Frame) -> Next,
-) -> actor.Next(State, GlistenMessage) {
+  handler: fn(WebsocketConnection, user_state, ws.Frame) -> Next(user_state),
+) -> actor.Next(State(user_state), GlistenMessage) {
   let #(frames, rest) =
     ws.decode_many_frames(<<state.buffer:bits, data:bits>>, None, [])
 
@@ -110,13 +115,18 @@ fn handle_valid_packet(
   let next =
     ws.aggregate_frames(frames, None, [])
     // |> echo as "aggregated frames:"
-    |> result.map(loop_by_frames(_, transport, socket, handler, Continue))
+    |> result.map(loop_by_frames(
+      _,
+      state.conn,
+      handler,
+      Continue(state.user_state),
+    ))
   // |> echo as "`next` after looping frames:"
 
   case next {
-    Ok(Continue) -> {
+    Ok(Continue(new_user_state)) -> {
       set_socket_active_once(transport, socket)
-      actor.continue(State(..state, buffer: rest))
+      actor.continue(State(..state, buffer: rest, user_state: new_user_state))
     }
     Ok(Stop(Normal)) -> actor.stop()
     Ok(Stop(Abnormal(reason))) -> actor.stop_abnormal(reason)
@@ -126,11 +136,10 @@ fn handle_valid_packet(
 
 fn loop_by_frames(
   frames: List(ws.Frame),
-  transport: transport.Transport,
-  socket: socket.Socket,
-  handler: fn(ws.Frame) -> Next,
-  next: Next,
-) -> Next {
+  conn: WebsocketConnection,
+  handler: fn(WebsocketConnection, user_state, ws.Frame) -> Next(user_state),
+  next: Next(user_state),
+) -> Next(user_state) {
   case frames, next {
     // Early termination cases
     _, Stop(Normal) -> Stop(Normal)
@@ -140,27 +149,35 @@ fn loop_by_frames(
     [], next -> next
 
     // Control frames
-    [ws.Control(ws.PingFrame(payload))], Continue -> {
+    [ws.Control(ws.PingFrame(payload))], Continue(user_state) -> {
       let sent =
-        transport.send(transport, socket, ws.encode_pong_frame(payload, None))
+        transport.send(
+          conn.transport,
+          conn.socket,
+          ws.encode_pong_frame(payload, None),
+        )
 
       case sent {
-        Ok(Nil) -> Continue
+        Ok(Nil) -> Continue(user_state)
         Error(_) -> Stop(Abnormal("Failed to send PONG frame"))
       }
     }
-    [ws.Control(ws.CloseFrame(reason))], Continue -> {
+    [ws.Control(ws.CloseFrame(reason))], Continue(_) -> {
       let _ =
-        transport.send(transport, socket, ws.encode_close_frame(reason, None))
+        transport.send(
+          conn.transport,
+          conn.socket,
+          ws.encode_close_frame(reason, None),
+        )
 
       Stop(Normal)
     }
 
     // Data frames
-    [frame, ..rest], Continue -> {
-      case exception.rescue(fn() { handler(frame) }) {
-        Ok(Continue) ->
-          loop_by_frames(rest, transport, socket, handler, Continue)
+    [frame, ..rest], Continue(user_state) -> {
+      case exception.rescue(fn() { handler(conn, user_state, frame) }) {
+        Ok(Continue(new_user_state)) ->
+          loop_by_frames(rest, conn, handler, Continue(new_user_state))
         Ok(stop) -> stop
         Error(_) -> Stop(Abnormal("Crash in websocket handler"))
       }
@@ -187,6 +204,24 @@ fn after_start(
     )
 
   selector
+}
+
+pub fn send_binary_frame(
+  transport: transport.Transport,
+  socket: socket.Socket,
+  bits: BitArray,
+) -> Result(Nil, glisten.SocketReason) {
+  ws.encode_binary_frame(bits, option.None, option.None)
+  |> transport.send(transport, socket, _)
+}
+
+pub fn send_text_frame(
+  transport: transport.Transport,
+  socket: socket.Socket,
+  text: String,
+) -> Result(Nil, glisten.SocketReason) {
+  ws.encode_text_frame(text, option.None, option.None)
+  |> transport.send(transport, socket, _)
 }
 
 // Controlled message delivery pattern (to receive exactly one message before reverting to passive mode)

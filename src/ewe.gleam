@@ -453,26 +453,10 @@ pub fn read_body(
   }
 }
 
-/// With this option, body is read before handler is called, making request
-/// body available in handler (`Request(BitArray)`). If body is invalid or too
-/// large, `on_failure` function is called.
-/// 
-pub fn with_read_body(
-  builder: Builder(BitArray),
-  size_limit: Int,
-  on_failure: fn(BodyError) -> Response(ResponseBody),
-) -> Builder(Connection) {
-  let handler = fn(req) {
-    case read_body(req, size_limit) {
-      Ok(req) -> builder.handler(req)
-      Error(e) -> on_failure(e)
-    }
-  }
-
-  Builder(..builder, handler:)
-}
-
 // WEBSOCKET ------------------------------------------------------------------
+
+pub type WebsocketConnection =
+  websocket_.WebsocketConnection
 
 type ExitReason {
   Normal
@@ -485,32 +469,32 @@ type ExitReason {
 /// - stop the WebSocket connection.
 /// - stop the WebSocket connection with abnormal reason.
 /// 
-pub opaque type Next {
-  Continue
+pub opaque type Next(user_state) {
+  Continue(user_state)
   Stop(ExitReason)
 }
 
 /// Instructs WebSocket connection to continue processing.
 /// 
-pub fn continue() -> Next {
-  Continue
+pub fn continue(user_state: user_state) -> Next(user_state) {
+  Continue(user_state)
 }
 
 /// Instructs WebSocket connection to stop.
 /// 
-pub fn stop() -> Next {
+pub fn stop() -> Next(user_state) {
   Stop(Normal)
 }
 
 /// Instructs WebSocket connection to stop with abnormal reason.
 /// 
-pub fn stop_abnormal(reason: String) -> Next {
+pub fn stop_abnormal(reason: String) -> Next(user_state) {
   Stop(Abnormal(reason))
 }
 
-fn to_internal_next(next: Next) -> websocket_.Next {
+fn to_internal_next(next: Next(user_state)) -> websocket_.Next(user_state) {
   case next {
-    Continue -> websocket_.Continue
+    Continue(user_state) -> websocket_.Continue(user_state)
     Stop(Normal) -> websocket_.Stop(websocket_.Normal)
     Stop(Abnormal(reason)) -> websocket_.Stop(websocket_.Abnormal(reason))
   }
@@ -538,12 +522,14 @@ fn transform_websocket_message(frame: ws.Frame) -> Result(WebsocketMessage, Nil)
 ///  
 pub fn upgrade_websocket(
   req: Request(Connection),
-  handler: fn(WebsocketMessage) -> Next,
+  on_init on_init: fn(WebsocketConnection) -> user_state,
+  handler handler: fn(WebsocketConnection, user_state, WebsocketMessage) ->
+    Next(user_state),
 ) -> Response(ResponseBody) {
-  let handler = fn(msg) {
+  let handler = fn(conn, state, msg) {
     transform_websocket_message(msg)
-    |> result.map(handler)
-    |> result.unwrap(continue())
+    |> result.map(handler(conn, state, _))
+    |> result.unwrap(continue(state))
     |> to_internal_next()
   }
 
@@ -557,7 +543,7 @@ pub fn upgrade_websocket(
     )
 
     use selector <- result.try(
-      websocket_.start(transport, socket, handler)
+      websocket_.start(transport, socket, on_init, handler)
       |> result.replace_error(response.new(500) |> response.set_body(Empty)),
     )
 
@@ -567,6 +553,24 @@ pub fn upgrade_websocket(
   }
 
   result.unwrap_both(resp)
+}
+
+/// Sends a binary frame to the websocket client.
+/// 
+pub fn send_binary_frame(
+  conn: WebsocketConnection,
+  bits: BitArray,
+) -> Result(Nil, glisten.SocketReason) {
+  websocket_.send_binary_frame(conn.transport, conn.socket, bits)
+}
+
+/// Sends a text frame to the websocket client.
+/// 
+pub fn send_text_frame(
+  conn: WebsocketConnection,
+  text: String,
+) -> Result(Nil, glisten.SocketReason) {
+  websocket_.send_text_frame(conn.transport, conn.socket, text)
 }
 
 // EXPERIMENTAL ----------------------------------------------------------------

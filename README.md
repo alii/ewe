@@ -55,7 +55,12 @@ pub fn handler(req: Request(ewe.Connection)) -> Response(ewe.ResponseBody) {
       response.new(200)
       |> ewe.text("Hello, " <> name <> "!")
     ["echo"] -> handle_echo(req)
-    ["ws"] -> ewe.upgrade_websocket(req, handle_websocket)
+    ["ws"] ->
+      ewe.upgrade_websocket(
+        req,
+        on_init: fn(_conn) { Nil },
+        handler: handle_websocket,
+      )
     _ ->
       response.new(404)
       |> ewe.json(error_json("Not found"))
@@ -83,19 +88,27 @@ pub fn handle_echo(req: Request(ewe.Connection)) -> Response(ewe.ResponseBody) {
   |> Ok
 }
 
-pub fn handle_websocket(msg: ewe.WebsocketMessage) -> ewe.Next {
+pub fn handle_websocket(
+  conn: ewe.WebsocketConnection,
+  state: Nil,
+  msg: ewe.WebsocketMessage,
+) -> ewe.Next(Nil) {
   case msg {
-    ewe.Text("stop") -> ewe.stop()
+    ewe.Text("Ping") -> {
+      let _ = ewe.send_text_frame(conn, "Pong")
+      ewe.continue(state)
+    }
+    ewe.Text("Stop") -> ewe.stop()
     ewe.Text(text) -> {
       io.println("Received text: " <> text)
-      ewe.continue()
+      ewe.continue(state)
     }
     ewe.Binary(binary) -> {
       io.println(
         "Received binary of size: "
         <> int.to_string(bit_array.byte_size(binary)),
       )
-      ewe.continue()
+      ewe.continue(state)
     }
   }
 }
