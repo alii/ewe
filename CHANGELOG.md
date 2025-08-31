@@ -1,6 +1,6 @@
 # Changelog
 
-# Unreleased
+# v0.6.0
 
 - HTTP parser now handles trailers when working with chunked encoding.
 - Remove `ewe.with_read_body`, leaving `ewe.read_body` as the only option to read the body.
