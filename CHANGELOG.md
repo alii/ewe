@@ -1,6 +1,6 @@
 # Changelog
 
-# Unreleased
+# v0.7.0
 
 - Add support for custom user messages in WebSocket handlers. The `on_init` function now receives a `process.Selector` that can be used to listen for custom messages sent from other parts of the application.
 - Custom messages are delivered to WebSocket handlers as `ewe.User(message)` type.
