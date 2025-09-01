@@ -116,13 +116,13 @@ pub fn start(
   extensions: List(String),
   permessage_deflate: Bool,
 ) -> Result(process.Selector(process.Down), actor.StartError) {
-  let takeovers = ws.get_context_takeovers(extensions)
-  let compression = case permessage_deflate {
-    True -> Some(compression.init(takeovers))
-    False -> None
-  }
-
   actor.new_with_initialiser(1000, fn(subject) {
+    let takeovers = ws.get_context_takeovers(extensions)
+    let compression = case permessage_deflate {
+      True -> Some(compression.init(takeovers))
+      False -> None
+    }
+
     let conn = WebsocketConnection(transport, socket, get_deflate(compression))
 
     let #(user_state, user_selector) = on_init(conn, process.new_selector())
@@ -314,14 +314,14 @@ pub fn send_frame(
   deflate: Option(compression.Context),
   data: data,
 ) {
-  let sent =
+  let frame =
     exception.rescue(fn() {
       encoder(data, deflate, option.None)
       |> transport.send(transport, socket, _)
     })
 
-  case sent {
-    Ok(result) -> result
+  case frame {
+    Ok(frame) -> frame
     Error(_) -> panic as "Sending WebSocket message from non-owning process"
   }
 }

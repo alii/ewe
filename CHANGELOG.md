@@ -4,6 +4,7 @@
 
 - Add support for custom user messages in WebSocket handlers. The `on_init` function now receives a `process.Selector` that can be used to listen for custom messages sent from other parts of the application.
 - Custom messages are delivered to WebSocket handlers as `ewe.User(message)` type.
+- Add permessage-deflate compression support for WebSocket connections. When enabled, messages are automatically compressed using defalte algorithm, reducing bandwidth usage for text-heavy applications.
 
 # v0.6.0
 
