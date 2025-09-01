@@ -580,17 +580,21 @@ fn to_internal_next(next: Next(user_state)) -> websocket_.Next(user_state) {
 }
 
 /// Represents a WebSocket message received from the client.
-pub type WebsocketMessage {
+pub type WebsocketMessage(user_message) {
   Text(String)
   Binary(BitArray)
+  User(user_message)
 }
 
-fn transform_websocket_message(frame: ws.Frame) -> Result(WebsocketMessage, Nil) {
-  case frame {
-    ws.Data(ws.TextFrame(text)) ->
+fn transform_websocket_message(
+  message: websocket_.HandlerMessage(user_message),
+) -> Result(WebsocketMessage(user_message), Nil) {
+  case message {
+    websocket_.Frame(ws.Data(ws.TextFrame(text))) ->
       bit_array.to_string(text)
       |> result.map(Text)
-    ws.Data(ws.BinaryFrame(binary)) -> Ok(Binary(binary))
+    websocket_.Frame(ws.Data(ws.BinaryFrame(binary))) -> Ok(Binary(binary))
+    websocket_.UserMessage(user_message) -> Ok(User(user_message))
     _ -> Error(Nil)
   }
 }
@@ -601,8 +605,13 @@ fn transform_websocket_message(frame: ws.Frame) -> Result(WebsocketMessage, Nil)
 ///  
 pub fn upgrade_websocket(
   req: Request(Connection),
-  on_init on_init: fn(WebsocketConnection) -> user_state,
-  handler handler: fn(WebsocketConnection, user_state, WebsocketMessage) ->
+  on_init on_init: fn(WebsocketConnection, process.Selector(user_message)) ->
+    #(user_state, process.Selector(user_message)),
+  handler handler: fn(
+    WebsocketConnection,
+    user_state,
+    WebsocketMessage(user_message),
+  ) ->
     Next(user_state),
 ) -> Response(ResponseBody) {
   let handler = fn(conn, state, msg) {
@@ -616,13 +625,20 @@ pub fn upgrade_websocket(
   let socket = req.body.socket
 
   let resp = {
-    use _ <- result.try(
+    use #(extensions, permessage_deflate) <- result.try(
       http_.upgrade_websocket(req, transport, socket)
       |> result.replace_error(response.new(400) |> response.set_body(Empty)),
     )
 
     use selector <- result.try(
-      websocket_.start(transport, socket, on_init, handler)
+      websocket_.start(
+        transport,
+        socket,
+        on_init,
+        handler,
+        extensions,
+        permessage_deflate,
+      )
       |> result.replace_error(response.new(500) |> response.set_body(Empty)),
     )
 
@@ -640,7 +656,13 @@ pub fn send_binary_frame(
   conn: WebsocketConnection,
   bits: BitArray,
 ) -> Result(Nil, glisten.SocketReason) {
-  websocket_.send_binary_frame(conn.transport, conn.socket, bits)
+  websocket_.send_frame(
+    ws.encode_binary_frame,
+    conn.transport,
+    conn.socket,
+    conn.deflate,
+    bits,
+  )
 }
 
 /// Sends a text frame to the websocket client.
@@ -649,7 +671,13 @@ pub fn send_text_frame(
   conn: WebsocketConnection,
   text: String,
 ) -> Result(Nil, glisten.SocketReason) {
-  websocket_.send_text_frame(conn.transport, conn.socket, text)
+  websocket_.send_frame(
+    ws.encode_text_frame,
+    conn.transport,
+    conn.socket,
+    conn.deflate,
+    text,
+  )
 }
 
 // EXPERIMENTAL ----------------------------------------------------------------

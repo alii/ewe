@@ -18,13 +18,12 @@ gleam add ewe@0.6.0 gleam_http gleam_erlang gleam_json
 ⚠️ This package is in WIP stage, so public API will change quite often.
 
 ```gleam
-import gleam/bit_array
-import gleam/erlang/process
+import gleam/erlang/process.{type Subject}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
-import gleam/int
-import gleam/io
 import gleam/json
+import gleam/list
+import gleam/otp/actor
 import gleam/result
 import gleam/string_tree.{type StringTree}
 
@@ -36,8 +35,11 @@ fn error_json(error: String) -> StringTree {
 }
 
 pub fn main() {
+  let assert Ok(started) = process_registry()
+  let registry = started.data
+
   let assert Ok(_) =
-    ewe.new(handler)
+    ewe.new(handler(_, registry))
     |> ewe.on_crash(
       error_json("Something went wrong, try again later")
       |> ewe.json(response.new(500), _),
@@ -49,7 +51,10 @@ pub fn main() {
   process.sleep_forever()
 }
 
-pub fn handler(req: Request(ewe.Connection)) -> Response(ewe.ResponseBody) {
+fn handler(
+  req: Request(ewe.Connection),
+  registry: Subject(ProcessRegistryMessage),
+) -> Response(ewe.ResponseBody) {
   case request.path_segments(req) {
     ["hello", name] ->
       response.new(200)
@@ -58,16 +63,26 @@ pub fn handler(req: Request(ewe.Connection)) -> Response(ewe.ResponseBody) {
     ["ws"] ->
       ewe.upgrade_websocket(
         req,
-        on_init: fn(_conn) { Nil },
+        on_init: fn(_conn, selector) {
+          let subject = process.new_subject()
+
+          register(registry, subject)
+
+          #(Nil, process.select(selector, subject))
+        },
         handler: handle_websocket,
       )
+    ["ws", "announce", text] -> {
+      announce(registry, text)
+      ewe.empty(response.new(200))
+    }
     _ ->
       response.new(404)
       |> ewe.json(error_json("Not found"))
   }
 }
 
-pub fn handle_echo(req: Request(ewe.Connection)) -> Response(ewe.ResponseBody) {
+fn handle_echo(req: Request(ewe.Connection)) -> Response(ewe.ResponseBody) {
   let content_type =
     request.get_header(req, "content-type")
     |> result.unwrap("text/plain")
@@ -88,28 +103,64 @@ pub fn handle_echo(req: Request(ewe.Connection)) -> Response(ewe.ResponseBody) {
   |> Ok
 }
 
-pub fn handle_websocket(
+type Broadcast {
+  Announcement(String)
+}
+
+fn handle_websocket(
   conn: ewe.WebsocketConnection,
   state: Nil,
-  msg: ewe.WebsocketMessage,
+  msg: ewe.WebsocketMessage(Broadcast),
 ) -> ewe.Next(Nil) {
   case msg {
     ewe.Text("Ping") -> {
       let _ = ewe.send_text_frame(conn, "Pong")
       ewe.continue(state)
     }
-    ewe.Text("Stop") -> ewe.stop()
-    ewe.Text(text) -> {
-      io.println("Received text: " <> text)
+    ewe.User(Announcement(text)) -> {
+      let _ = ewe.send_text_frame(conn, "Announcement: " <> text)
       ewe.continue(state)
     }
+    ewe.Text("Exit") -> ewe.stop()
+
     ewe.Binary(binary) -> {
-      io.println(
-        "Received binary of size: "
-        <> int.to_string(bit_array.byte_size(binary)),
-      )
+      let _ = ewe.send_binary_frame(conn, binary)
+      ewe.continue(state)
+    }
+    ewe.Text(text) -> {
+      let _ = ewe.send_text_frame(conn, text)
       ewe.continue(state)
     }
   }
+}
+
+type ProcessRegistryMessage {
+  Register(Subject(Broadcast))
+  Announce(Broadcast)
+}
+
+fn process_registry() {
+  actor.new([])
+  |> actor.on_message(fn(state, msg) {
+    case msg {
+      Register(subject) -> actor.continue([subject, ..state])
+      Announce(msg) -> {
+        list.each(state, fn(subject) { process.send(subject, msg) })
+        actor.continue(state)
+      }
+    }
+  })
+  |> actor.start()
+}
+
+fn register(
+  registry: Subject(ProcessRegistryMessage),
+  subject: Subject(Broadcast),
+) {
+  process.send(registry, Register(subject))
+}
+
+fn announce(registry: Subject(ProcessRegistryMessage), message: String) {
+  process.send(registry, Announce(Announcement(message)))
 }
 ```

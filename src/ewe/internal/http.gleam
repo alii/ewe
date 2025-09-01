@@ -485,7 +485,7 @@ pub fn upgrade_websocket(
   req: Request(Connection),
   transport: transport.Transport,
   socket: socket.Socket,
-) -> Result(Nil, UpgradeWebsocketError) {
+) -> Result(#(List(String), Bool), UpgradeWebsocketError) {
   let assert option.Some(http_version) = req.body.http_version
 
   use <- bool.guard(http_version != Http11, Error(VersionNot11OrGreater))
@@ -515,23 +515,36 @@ pub fn upgrade_websocket(
 
   let accept_key = ws.parse_websocket_key(key)
 
-  // TODO: figure out what to do with extensions
-  let _extensions =
+  let extensions =
     request.get_header(req, "sec-websocket-extensions")
     |> result.map(string.split(_, ";"))
     |> result.unwrap([])
 
-  let _ =
+  let permessage_deflate = ws.has_deflate(extensions)
+
+  let resp =
     response.new(101)
     |> response.set_body(bytes_tree.new())
     |> response.set_header("connection", "upgrade")
     |> response.set_header("upgrade", "websocket")
     |> response.set_header("sec-websocket-accept", accept_key)
     |> response.set_header("sec-websocket-version", "13")
-    |> encoder.encode_response()
+
+  let resp = case permessage_deflate {
+    True ->
+      response.set_header(
+        resp,
+        "sec-websocket-extensions",
+        "permessage-deflate",
+      )
+    False -> resp
+  }
+
+  let _ =
+    encoder.encode_response(resp)
     |> transport.send(transport, socket, _)
 
-  Ok(Nil)
+  Ok(#(extensions, permessage_deflate))
 }
 
 pub fn append_default_headers(
