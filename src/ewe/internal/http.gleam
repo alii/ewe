@@ -28,6 +28,7 @@ import glisten/transport
 
 import gramps/websocket as ws
 
+import ewe/internal/buffer.{type Buffer}
 import ewe/internal/decoder.{
   AbsPath, HttpBin, HttpEoh, HttpHeader, HttpRequest, HttphBin, More, Packet,
 }
@@ -74,7 +75,7 @@ pub type Connection {
   Connection(
     transport: transport.Transport,
     socket: socket.Socket,
-    buffer: BitArray,
+    buffer: buffer.Buffer,
     http_version: option.Option(HttpVersion),
   )
 }
@@ -99,9 +100,9 @@ pub type UpgradeWebsocketError {
 
 // Chunked body parsing result
 type BodyChunk {
-  Done(rest: BitArray)
+  Done(rest: Buffer)
   Incomplete
-  Chunk(BitArray, rest: BitArray)
+  Chunk(BitArray, rest: Buffer)
 }
 
 // -----------------------------------------------------------------------------
@@ -120,7 +121,7 @@ pub fn transform_connection(connection: glisten.Connection(a)) -> Connection {
   Connection(
     transport: connection.transport,
     socket: connection.socket,
-    buffer: <<>>,
+    buffer: buffer.empty(),
     http_version: option.None,
   )
 }
@@ -128,12 +129,12 @@ pub fn transform_connection(connection: glisten.Connection(a)) -> Connection {
 /// Parses an HTTP request from the given buffer
 pub fn parse_request(
   connection: Connection,
-  buffer: BitArray,
+  buffer: Buffer,
 ) -> Result(Request(Connection), ParseError) {
   let transport = connection.transport
   let socket = connection.socket
 
-  case decoder.decode_packet(HttpBin, buffer, []) {
+  case decoder.decode_packet(HttpBin, buffer.data, []) {
     Ok(Packet(HttpRequest(atom_method, AbsPath(target), version), rest)) -> {
       // Request Line
       use method <- try(
@@ -157,7 +158,7 @@ pub fn parse_request(
       use #(headers, rest) <- try(parse_headers(
         transport,
         socket,
-        rest,
+        buffer.new(rest),
         dict.new(),
       ))
 
@@ -185,7 +186,7 @@ pub fn parse_request(
         headers: dict.to_list(headers),
         body: Connection(
           ..connection,
-          buffer: rest,
+          buffer: buffer.new(rest),
           http_version: option.Some(version),
         ),
         scheme:,
@@ -198,15 +199,16 @@ pub fn parse_request(
     Ok(More(size)) -> {
       let read_size = option.unwrap(size, 0)
 
-      use buffer <- try(read_from_socket(
+      let sized_buffer = buffer.sized(connection.buffer, read_size)
+
+      use new_buffer <- try(read_from_socket(
         transport,
         socket,
-        amount: read_size,
-        buffer: connection.buffer,
+        sized_buffer,
         on_error: MalformedRequest,
       ))
 
-      parse_request(connection, buffer)
+      parse_request(connection, new_buffer)
     }
     _ -> Error(PacketDiscard)
   }
@@ -228,7 +230,7 @@ pub fn read_body(
 
   case transfer_encoding {
     Ok("chunked") -> {
-      use #(body, rest) <- try(read_chunked_body(
+      use #(body, rest_buffer) <- try(read_chunked_body(
         transport,
         socket,
         req.body.buffer,
@@ -248,7 +250,7 @@ pub fn read_body(
               set.insert(set, string.trim(field) |> string.lowercase())
             })
 
-          Ok(handle_trailers(req, set, rest))
+          Ok(handle_trailers(req, set, rest_buffer))
         }
         Error(Nil) -> Ok(req)
       }
@@ -261,19 +263,19 @@ pub fn read_body(
 
       use <- bool.guard(content_length > size_limit, Error(BodyTooLarge))
 
-      let left = content_length - bit_array.byte_size(req.body.buffer)
+      let left = content_length - bit_array.byte_size(req.body.buffer.data)
 
       case content_length, left {
         0, 0 -> Ok(<<>>)
-        0, _l | _cl, 0 -> Ok(req.body.buffer)
+        0, _l | _cl, 0 -> Ok(req.body.buffer.data)
         _cl, _l ->
           read_from_socket(
             transport,
             socket,
-            amount: left,
-            buffer: req.body.buffer,
+            buffer: buffer.sized(req.body.buffer, left),
             on_error: InvalidBody,
           )
+          |> result.map(fn(buffer) { buffer.data })
       }
       |> result.map(request.set_body(req, _))
     }
@@ -379,23 +381,21 @@ pub fn append_default_headers(
 fn read_from_socket(
   transport: transport.Transport,
   socket: socket.Socket,
-  amount amount: Int,
-  buffer buffer: BitArray,
+  buffer buffer: Buffer,
   on_error on_error: ParseError,
-) -> Result(BitArray, ParseError) {
-  let read_size = int.min(amount, max_reading_size)
+) -> Result(Buffer, ParseError) {
+  let read_size = int.min(buffer.remaining, max_reading_size)
 
   use data <- try(
     transport.receive_timeout(transport, socket, read_size, 10_000)
     |> replace_error(on_error),
   )
 
-  let amount = amount - read_size
-  let buffer = <<buffer:bits, data:bits>>
+  let new_buffer = buffer.append_size(buffer, data, read_size)
 
-  case amount > 0 {
-    True -> read_from_socket(transport, socket, amount:, buffer:, on_error:)
-    False -> Ok(buffer)
+  case new_buffer.remaining {
+    0 -> Ok(new_buffer)
+    _ -> read_from_socket(transport, socket, new_buffer, on_error:)
   }
 }
 
@@ -407,10 +407,10 @@ fn read_from_socket(
 fn parse_headers(
   transport: transport.Transport,
   socket: socket.Socket,
-  buffer: BitArray,
+  buffer: Buffer,
   headers: Dict(String, String),
 ) {
-  case decoder.decode_packet(HttphBin, buffer, []) {
+  case decoder.decode_packet(HttphBin, buffer.data, []) {
     Ok(Packet(HttpEoh, rest)) -> Ok(#(headers, rest))
     Ok(Packet(HttpHeader(idx, field, value), rest)) -> {
       use field <- try(case decoder.formatted_field_by_idx(idx) {
@@ -427,21 +427,24 @@ fn parse_headers(
         |> replace_error(InvalidHeaders),
       )
 
+      let new_buffer = buffer.new(rest)
+
       insert_header(headers, field, value)
-      |> parse_headers(transport, socket, rest, _)
+      |> parse_headers(transport, socket, new_buffer, _)
     }
     Ok(More(size)) -> {
       let read_size = option.unwrap(size, 0)
 
-      use buffer <- try(read_from_socket(
+      let sized_buffer = buffer.sized(buffer, read_size)
+
+      use new_buffer <- try(read_from_socket(
         transport,
         socket,
-        amount: read_size,
-        buffer:,
+        sized_buffer,
         on_error: InvalidHeaders,
       ))
 
-      parse_headers(transport, socket, buffer, headers)
+      parse_headers(transport, socket, new_buffer, headers)
     }
     _ -> Error(InvalidHeaders)
   }
@@ -510,25 +513,31 @@ fn handle_continue(req: Request(Connection)) -> Result(Nil, ParseError) {
 fn read_chunked_body(
   transport: transport.Transport,
   socket: socket.Socket,
-  buffer: BitArray,
+  buffer: Buffer,
   body: BitArray,
   size_limit: Int,
   total_size: Int,
-) -> Result(#(BitArray, BitArray), ParseError) {
+) -> Result(#(BitArray, Buffer), ParseError) {
   use <- bool.guard(total_size > size_limit, Error(BodyTooLarge))
 
   case parse_body_chunk(buffer) {
     Ok(Done(rest)) -> Ok(#(body, rest))
     Ok(Incomplete) -> {
-      use buffer <- try(read_from_socket(
+      use new_buffer <- try(read_from_socket(
         transport,
         socket,
-        amount: 0,
-        buffer:,
+        buffer,
         on_error: InvalidBody,
       ))
 
-      read_chunked_body(transport, socket, buffer, body, size_limit, total_size)
+      read_chunked_body(
+        transport,
+        socket,
+        new_buffer,
+        body,
+        size_limit,
+        total_size,
+      )
     }
     Ok(Chunk(chunk, rest)) -> {
       let body = <<body:bits, chunk:bits>>
@@ -541,9 +550,9 @@ fn read_chunked_body(
 }
 
 /// Parses a single chunk from the chunked body
-fn parse_body_chunk(buffer: BitArray) -> Result(BodyChunk, ParseError) {
-  case split(buffer, <<"\r\n">>, []) {
-    [<<"0">>, rest] -> Ok(Done(rest))
+fn parse_body_chunk(buffer: Buffer) -> Result(BodyChunk, ParseError) {
+  case split(buffer.data, <<"\r\n">>, []) {
+    [<<"0">>, rest] -> Ok(Done(buffer.new(rest)))
     [chunk_size, rest] -> {
       use size <- try(
         bit_array.to_string(chunk_size)
@@ -554,7 +563,7 @@ fn parse_body_chunk(buffer: BitArray) -> Result(BodyChunk, ParseError) {
       case split(rest, <<"\r\n">>, []) {
         [chunk, rest] -> {
           case bit_array.byte_size(chunk) == size {
-            True -> Ok(Chunk(chunk, rest))
+            True -> Ok(Chunk(chunk, buffer.new(rest)))
             False -> Error(InvalidBody)
           }
         }
@@ -573,27 +582,29 @@ fn parse_body_chunk(buffer: BitArray) -> Result(BodyChunk, ParseError) {
 fn handle_trailers(
   req: Request(BitArray),
   set: set.Set(String),
-  rest: BitArray,
+  rest: Buffer,
 ) -> Request(BitArray) {
-  case decoder.decode_packet(HttphBin, rest, []) {
+  case decoder.decode_packet(HttphBin, rest.data, []) {
     Ok(Packet(HttpEoh, _)) -> req
-    Ok(Packet(HttpHeader(idx, field, value), rest)) -> {
-      let field = case decoder.formatted_field_by_idx(idx) {
-        Ok(field) -> Ok(field)
+    Ok(Packet(HttpHeader(idx, field, value), header_rest)) -> {
+      let field_name = case decoder.formatted_field_by_idx(idx) {
+        Ok(field_name) -> Ok(field_name)
         Error(Nil) -> {
           bit_array.to_string(field)
           |> result.map(string.lowercase)
         }
       }
 
-      case field {
-        Ok(field) -> {
-          case set.contains(set, field) && !is_forbidden_trailer(field) {
+      case field_name {
+        Ok(field_name) -> {
+          case
+            set.contains(set, field_name) && !is_forbidden_trailer(field_name)
+          {
             True -> {
               case bit_array.to_string(value) {
                 Ok(value) -> {
-                  request.set_header(req, field, value)
-                  |> handle_trailers(set, rest)
+                  request.set_header(req, field_name, value)
+                  |> handle_trailers(set, buffer.new(header_rest))
                 }
                 Error(Nil) -> handle_trailers(req, set, rest)
               }

@@ -479,10 +479,7 @@ pub fn start(
   let information = information.worker(builder.information_name)
 
   let glisten_supervisor =
-    glisten.new(
-      fn(conn) { #(http_.transform_connection(conn), None) },
-      handler_.loop(handler, on_crash),
-    )
+    glisten.new(fn(_conn) { #(Nil, None) }, handler_.loop(handler, on_crash))
     |> glisten.bind(builder.interface)
     |> fn(glisten_builder) {
       case builder.ipv6 {

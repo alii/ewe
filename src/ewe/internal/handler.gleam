@@ -11,6 +11,7 @@ import gleam/result
 import glisten
 import glisten/transport
 
+import ewe/internal/buffer
 import ewe/internal/encoder
 import ewe/internal/exception
 import ewe/internal/http.{
@@ -42,14 +43,15 @@ type Next {
 pub fn loop(
   handler: fn(Request(Connection)) -> Response(ResponseBody),
   on_crash: Response(ResponseBody),
-) -> glisten.Loop(Connection, a) {
-  fn(http_conn, msg, _conn) {
+) -> glisten.Loop(Nil, a) {
+  fn(state, msg, conn) {
     let assert glisten.Packet(msg) = msg
+    let http_conn = http_.transform_connection(conn)
 
-    http_.parse_request(http_conn, msg)
+    http_.parse_request(http_conn, buffer.new(msg))
     |> result.map(fn(req) {
       case call_handler(req, handler, on_crash) {
-        Continue -> glisten.continue(http_conn)
+        Continue -> glisten.continue(state)
         Stop(Normal) -> glisten.stop()
         Stop(Abnormal(reason)) -> glisten.stop_abnormal(reason)
       }
