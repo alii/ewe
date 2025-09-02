@@ -314,13 +314,13 @@ type OnStart =
 /// with the following functions:
 /// - `ewe.bind`
 /// - `ewe.bind_all`
-/// - `ewe.with_read_body`
-/// - `ewe.with_port`
-/// - `ewe.with_random_port`
-/// - `ewe.with_ipv6`
-/// - `ewe.with_tls`
-/// - `ewe.with_name`
+/// - `ewe.listening`
+/// - `ewe.listening_random`
+/// - `ewe.enable_ipv6`
+/// - `ewe.enable_tls`
+/// - `ewe.set_information_name`
 /// - `ewe.on_start`
+/// - `ewe.quiet`
 /// - `ewe.on_crash`
 /// 
 pub opaque type Builder(body) {
@@ -444,6 +444,12 @@ pub fn on_start(
   on_start: fn(http.Scheme, SocketAddress) -> Nil,
 ) -> Builder(body) {
   Builder(..builder, on_start:)
+}
+
+/// Sets empty `on_start` function.
+/// 
+pub fn quiet(builder: Builder(body)) -> Builder(body) {
+  Builder(..builder, on_start: fn(_, _) { Nil })
 }
 
 /// Sets a custom response that will be sent when server crashes.
