@@ -21,6 +21,7 @@ gleam add ewe@0.6.0 gleam_http gleam_erlang gleam_json
 import gleam/erlang/process.{type Subject}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
+import gleam/io
 import gleam/json
 import gleam/list
 import gleam/otp/actor
@@ -45,7 +46,7 @@ pub fn main() {
       |> ewe.json(response.new(500), _),
     )
     |> ewe.bind_all()
-    |> ewe.with_port(4000)
+    |> ewe.listening(port: 4000)
     |> ewe.start()
 
   process.sleep_forever()
@@ -71,6 +72,7 @@ fn handler(
           #(Nil, process.select(selector, subject))
         },
         handler: handle_websocket,
+        on_close: fn(_conn, _state) { io.println("Sayonara!") },
       )
     ["ws", "announce", text] -> {
       announce(registry, text)

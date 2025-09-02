@@ -1,30 +1,47 @@
+// -----------------------------------------------------------------------------
+// IMPORTS
+// -----------------------------------------------------------------------------
 import gleam/dynamic
 import gleam/http
 import gleam/option
 
+// -----------------------------------------------------------------------------
+// TYPES
+// -----------------------------------------------------------------------------
+
+// Type of HTTP packet being decoded
 pub type PacketType {
   HttpBin
   HttphBin
 }
 
+// Absolute path in HTTP request
 pub type AbsPath {
   AbsPath(BitArray)
 }
 
+// HTTP version as major and minor numbers
 pub type Version =
   #(Int, Int)
 
+// HTTP packet structure
 pub type HttpPacket {
   HttpRequest(method: BitArray, path: AbsPath, version: Version)
   HttpHeader(idx: Int, field: BitArray, value: BitArray)
   HttpEoh
 }
 
+// Complete packet with data and remaining bytes
 pub type Packet {
   Packet(HttpPacket, rest: BitArray)
   More(length: option.Option(Int))
 }
 
+// -----------------------------------------------------------------------------
+// DECODING
+// -----------------------------------------------------------------------------
+
+/// Decodes HTTP packets using external FFI implementation
 @external(erlang, "ewe_ffi", "decode_packet")
 pub fn decode_packet(
   type_ type_: PacketType,
@@ -32,6 +49,7 @@ pub fn decode_packet(
   options options: List(a),
 ) -> Result(Packet, dynamic.Dynamic)
 
+/// Decodes HTTP method from binary data
 pub fn decode_method(method: BitArray) -> Result(http.Method, Nil) {
   case method {
     <<"GET">> -> Ok(http.Get)
@@ -47,6 +65,11 @@ pub fn decode_method(method: BitArray) -> Result(http.Method, Nil) {
   }
 }
 
+// -----------------------------------------------------------------------------
+// MAPPING
+// -----------------------------------------------------------------------------
+
+/// Maps header field indices to their string names
 pub fn formatted_field_by_idx(idx: Int) -> Result(String, Nil) {
   case idx {
     0 -> Error(Nil)

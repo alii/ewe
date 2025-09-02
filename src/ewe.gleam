@@ -77,9 +77,15 @@
 //// #### Experimental
 //// - [use_expression](#use_expression)
 
+// TODO: figure something out with getting server information
+
+// -----------------------------------------------------------------------------
+// IMPORTS
+// -----------------------------------------------------------------------------
+
 import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
-import gleam/erlang/process
+import gleam/erlang/process.{type Selector}
 import gleam/http
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -87,11 +93,11 @@ import gleam/int
 import gleam/io
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
-import gleam/otp/static_supervisor as supervisor
+import gleam/otp/static_supervisor.{type Supervisor} as supervisor
 import gleam/otp/supervision
 import gleam/result
 import gleam/string
-import gleam/string_tree
+import gleam/string_tree.{type StringTree}
 
 import glisten
 import glisten/socket/options as glisten_options
@@ -102,10 +108,12 @@ import gramps/websocket as ws
 import ewe/internal/file as file_
 import ewe/internal/handler as handler_
 import ewe/internal/http as http_
-import ewe/internal/info as info_
+import ewe/internal/information
 import ewe/internal/websocket as websocket_
 
-// CONNECTION ------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// CONNECTION
+// -----------------------------------------------------------------------------
 
 /// Represents a connection between a client and a server, stored inside a
 /// `Request`. Can be converted to a `BitArray` using `ewe.read_body`.
@@ -113,7 +121,9 @@ import ewe/internal/websocket as websocket_
 pub type Connection =
   http_.Connection
 
-// IP ADDRESS ------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// IP ADDRESS
+// -----------------------------------------------------------------------------
 
 /// Represents an IP address. Appears when accessing client's information
 /// (`ewe.client_stats`) or `on_start` handler (`ewe.on_start`).
@@ -125,7 +135,7 @@ pub type IpAddress {
 
 /// Converts an `IpAddress` to a string for later printing.
 /// 
-pub fn ip_address_to_string(address: IpAddress) -> String {
+pub fn ip_address_to_string(address address: IpAddress) -> String {
   ewe_to_glisten_ip(address)
   |> glisten.ip_address_to_string()
 }
@@ -154,35 +164,40 @@ fn ewe_to_glisten_ip(ip: IpAddress) -> glisten.IpAddress {
   }
 }
 
-// INFO ------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// INFORMATION
+// -----------------------------------------------------------------------------
 
-/// Represents started server's information. Can be retrieved using
-/// `ewe.get_server_info`.
+/// Represents client or server information. Can be retrieved using
+/// `ewe.get_server_info` or `ewe.get_client_info`.
 /// 
-pub type ServerInfo {
-  ServerInfo(scheme: http.Scheme, ip_address: IpAddress, port: Int)
+pub type SocketAddress {
+  SocketAddress(ip: IpAddress, port: Int)
 }
 
-/// Performs an attempt to get the client's IP address and port.
+/// Performs an attempt to get the client's socket address.
 /// 
-pub fn get_client_info(connection: Connection) -> Result(#(IpAddress, Int), Nil) {
+pub fn get_client_info(
+  connection connection: Connection,
+) -> Result(SocketAddress, Nil) {
   transport.peername(connection.transport, connection.socket)
-  |> result.map(fn(tuple) {
-    let #(ip, port) = tuple
-    #(glisten_options_to_ewe_ip(ip), port)
+  |> result.map(fn(server_info) {
+    SocketAddress(glisten_options_to_ewe_ip(server_info.0), server_info.1)
   })
 }
 
-/// Retrieves server's information. Requires the same name as the one used in
+/// Retrieves server's socket address. Requires the same name as the one used in
 /// `ewe.with_name` and server to be started. Otherwise, will crash the program.
 /// 
 pub fn get_server_info(
-  name: process.Name(info_.Message(ServerInfo)),
-) -> Result(ServerInfo, Nil) {
-  info_.get(process.named_subject(name))
+  named name: process.Name(information.Message(SocketAddress)),
+) -> Result(SocketAddress, Nil) {
+  information.get(process.named_subject(name))
 }
 
-// RESPONSE --------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// RESPONSE
+// -----------------------------------------------------------------------------
 
 /// Represents a response body. To set the response body, use the following
 /// functions: 
@@ -198,9 +213,9 @@ pub opaque type ResponseBody {
   TextData(String)
   BytesData(BytesTree)
   BitsData(BitArray)
-  StringTreeData(string_tree.StringTree)
+  StringTreeData(StringTree)
 
-  WebsocketConnection(process.Selector(process.Down))
+  WebsocketConnection(Selector(process.Down))
 
   Empty
 }
@@ -257,7 +272,7 @@ pub fn bits(response: Response(a), bits: BitArray) -> Response(ResponseBody) {
 /// 
 pub fn string_tree(
   response: Response(a),
-  string_tree: string_tree.StringTree,
+  string_tree: StringTree,
 ) -> Response(ResponseBody) {
   response.set_body(response, StringTreeData(string_tree))
   |> response.set_header(
@@ -279,13 +294,21 @@ pub fn empty(response: Response(a)) -> Response(ResponseBody) {
 /// 
 pub fn json(
   response: Response(a),
-  json: string_tree.StringTree,
+  json json: StringTree,
 ) -> Response(ResponseBody) {
   string_tree(response, json)
   |> response.set_header("content-type", "application/json; charset=utf-8")
 }
 
-// BUILDER ---------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// BUILDER
+// -----------------------------------------------------------------------------
+
+type Handler(body) =
+  fn(Request(body)) -> Response(ResponseBody)
+
+type OnStart =
+  fn(http.Scheme, SocketAddress) -> Nil
 
 /// Ewe's server builder. Contains all server's configuration. Can be adjusted
 /// with the following functions:
@@ -302,14 +325,14 @@ pub fn json(
 /// 
 pub opaque type Builder(body) {
   Builder(
-    handler: fn(Request(body)) -> Response(ResponseBody),
+    handler: Handler(body),
     port: Int,
     interface: String,
     ipv6: Bool,
     tls: Option(#(String, String)),
-    on_start: fn(ServerInfo) -> Nil,
+    on_start: OnStart,
     on_crash: Response(ResponseBody),
-    info_worker_name: process.Name(info_.Message(ServerInfo)),
+    information_name: process.Name(information.Message(SocketAddress)),
   )
 }
 
@@ -324,23 +347,21 @@ pub opaque type Builder(body) {
 /// - on_start: prints `Listening on <scheme>://<ip_address>:<port>`
 /// - on_crash: empty 500 response
 /// 
-pub fn new(
-  handler: fn(Request(body)) -> Response(ResponseBody),
-) -> Builder(body) {
+pub fn new(handler: Handler(body)) -> Builder(body) {
   Builder(
     handler:,
     port: 8080,
     interface: "127.0.0.1",
     ipv6: False,
     tls: None,
-    on_start: fn(server) {
-      let address = case server.ip_address {
-        IpV6(..) -> "[" <> ip_address_to_string(server.ip_address) <> "]"
-        IpV4(..) -> ip_address_to_string(server.ip_address)
+    on_start: fn(scheme, server) {
+      let address = case server.ip {
+        IpV6(..) -> "[" <> ip_address_to_string(server.ip) <> "]"
+        IpV4(..) -> ip_address_to_string(server.ip)
       }
 
       let url =
-        http.scheme_to_string(server.scheme)
+        http.scheme_to_string(scheme)
         <> "://"
         <> address
         <> ":"
@@ -349,13 +370,16 @@ pub fn new(
       io.println("Listening on " <> url)
     },
     on_crash: response.new(500) |> response.set_body(Empty),
-    info_worker_name: process.new_name("ewe_server_info"),
+    information_name: process.new_name("ewe_server_info"),
   )
 }
 
 /// Binds server to a specific interface. Crashes program if interface is invalid.
 /// 
-pub fn bind(builder: Builder(body), interface: String) -> Builder(body) {
+pub fn bind(
+  builder: Builder(body),
+  interface interface: String,
+) -> Builder(body) {
   Builder(..builder, interface:)
 }
 
@@ -367,36 +391,36 @@ pub fn bind_all(builder: Builder(body)) -> Builder(body) {
 
 /// Sets listening port for server.
 /// 
-pub fn with_port(builder: Builder(body), port: Int) -> Builder(body) {
+pub fn listening(builder: Builder(body), port port: Int) -> Builder(body) {
   Builder(..builder, port:)
 }
 
 /// Sets listening port for server to a random port. Useful for testing.
 /// 
-pub fn with_random_port(builder: Builder(body)) -> Builder(body) {
+pub fn listening_random(builder: Builder(body)) -> Builder(body) {
   Builder(..builder, port: 0)
 }
 
 /// Enables IPv6 support.
 /// 
-pub fn with_ipv6(builder: Builder(body)) -> Builder(body) {
+pub fn enable_ipv6(builder: Builder(body)) -> Builder(body) {
   Builder(..builder, ipv6: True)
 }
 
 /// Enables TLS support, requires certificate and key file.
 /// 
-pub fn with_tls(
+pub fn enable_tls(
   builder: Builder(body),
-  certificate: String,
-  keyfile: String,
+  certificate_file certificate_file: String,
+  key_file key_file: String,
 ) -> Builder(body) {
-  let cert = case file_.open(certificate) {
-    Ok(_) -> certificate
+  let cert = case file_.open(certificate_file) {
+    Ok(_) -> certificate_file
     Error(_) -> panic as "Failed to find cert file"
   }
 
-  let key = case file_.open(keyfile) {
-    Ok(_) -> keyfile
+  let key = case file_.open(key_file) {
+    Ok(_) -> key_file
     Error(_) -> panic as "Failed to find key file"
   }
 
@@ -406,18 +430,18 @@ pub fn with_tls(
 /// Sets a custom process name for server information retrieval, allowing to
 /// use `ewe.get_server_info` after server starts.
 /// 
-pub fn with_name(
+pub fn set_information_name(
   builder: Builder(body),
-  name: process.Name(info_.Message(ServerInfo)),
+  name: process.Name(information.Message(SocketAddress)),
 ) -> Builder(body) {
-  Builder(..builder, info_worker_name: name)
+  Builder(..builder, information_name: name)
 }
 
 /// Sets a custom handler that will be called after server starts.
 /// 
 pub fn on_start(
   builder: Builder(body),
-  on_start: fn(ServerInfo) -> Nil,
+  on_start: fn(http.Scheme, SocketAddress) -> Nil,
 ) -> Builder(body) {
   Builder(..builder, on_start:)
 }
@@ -431,21 +455,22 @@ pub fn on_crash(
   Builder(..builder, on_crash:)
 }
 
-// SERVER ----------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// SERVER
+// -----------------------------------------------------------------------------
 
 /// Starts the server.
 /// 
 pub fn start(
   builder: Builder(Connection),
-) -> Result(actor.Started(supervisor.Supervisor), actor.StartError) {
+) -> Result(actor.Started(Supervisor), actor.StartError) {
   let name = process.new_name("ewe_glisten")
 
   let handler = fn(req) { transform_response_body(builder.handler(req)) }
   let on_crash = transform_response_body(builder.on_crash)
 
-  let worker_name = builder.info_worker_name
-  let subject = process.named_subject(worker_name)
-  let info_worker = info_.start_worker(worker_name)
+  let subject = process.named_subject(builder.information_name)
+  let information = information.worker(builder.information_name)
 
   let glisten_supervisor =
     glisten.new(
@@ -476,15 +501,10 @@ pub fn start(
       let server_info = glisten.get_server_info(name, 10_000)
       let ip_address = glisten_to_ewe_ip(server_info.ip_address)
 
-      let server =
-        ServerInfo(
-          scheme: scheme,
-          ip_address: ip_address,
-          port: server_info.port,
-        )
+      let server = SocketAddress(ip: ip_address, port: server_info.port)
 
-      info_.set(subject, server)
-      builder.on_start(server)
+      information.set(subject, server)
+      builder.on_start(scheme, server)
 
       started
     })
@@ -493,7 +513,7 @@ pub fn start(
 
   supervisor.new(supervisor.OneForAll)
   |> supervisor.add(glisten_child)
-  |> supervisor.add(info_worker)
+  |> supervisor.add(information)
   |> supervisor.start()
 }
 
@@ -505,7 +525,9 @@ pub fn supervised(
   supervision.supervisor(fn() { start(builder) })
 }
 
-// REQUEST ---------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// REQUEST
+// -----------------------------------------------------------------------------
 
 /// Possible errors that can occur when reading a body.
 /// 
@@ -523,24 +545,21 @@ pub type BodyError {
 /// 
 pub fn read_body(
   req: Request(Connection),
-  size_limit size_limit: Int,
+  bytes_limit bytes_limit: Int,
 ) -> Result(Request(BitArray), BodyError) {
-  case http_.read_body(req, size_limit) {
+  case http_.read_body(req, bytes_limit) {
     Ok(req) -> Ok(req)
     Error(http_.BodyTooLarge) -> Error(BodyTooLarge)
     Error(_) -> Error(InvalidBody)
   }
 }
 
-// WEBSOCKET -------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// WEBSOCKET
+// -----------------------------------------------------------------------------
 
 pub type WebsocketConnection =
   websocket_.WebsocketConnection
-
-type ExitReason {
-  Normal
-  Abnormal(reason: String)
-}
 
 /// Represents instruction on how WebSocket connection should proceed.
 /// 
@@ -550,7 +569,8 @@ type ExitReason {
 /// 
 pub opaque type Next(user_state) {
   Continue(user_state)
-  Stop(ExitReason)
+  NormalStop
+  AbnormalStop(reason: String)
 }
 
 /// Instructs WebSocket connection to continue processing.
@@ -562,20 +582,22 @@ pub fn continue(user_state: user_state) -> Next(user_state) {
 /// Instructs WebSocket connection to stop.
 /// 
 pub fn stop() -> Next(user_state) {
-  Stop(Normal)
+  NormalStop
 }
 
 /// Instructs WebSocket connection to stop with abnormal reason.
 /// 
 pub fn stop_abnormal(reason: String) -> Next(user_state) {
-  Stop(Abnormal(reason))
+  AbnormalStop(reason)
 }
 
-fn to_internal_next(next: Next(user_state)) -> websocket_.Next(user_state) {
+fn to_internal_next(
+  next: Next(user_state),
+) -> websocket_.WebsocketNext(user_state) {
   case next {
     Continue(user_state) -> websocket_.Continue(user_state)
-    Stop(Normal) -> websocket_.Stop(websocket_.Normal)
-    Stop(Abnormal(reason)) -> websocket_.Stop(websocket_.Abnormal(reason))
+    NormalStop -> websocket_.NormalStop
+    AbnormalStop(reason) -> websocket_.AbnormalStop(reason)
   }
 }
 
@@ -587,13 +609,14 @@ pub type WebsocketMessage(user_message) {
 }
 
 fn transform_websocket_message(
-  message: websocket_.HandlerMessage(user_message),
+  message: websocket_.WebsocketMessage(user_message),
 ) -> Result(WebsocketMessage(user_message), Nil) {
   case message {
-    websocket_.Frame(ws.Data(ws.TextFrame(text))) ->
+    websocket_.WebsocketFrame(ws.Data(ws.TextFrame(text))) ->
       bit_array.to_string(text)
       |> result.map(Text)
-    websocket_.Frame(ws.Data(ws.BinaryFrame(binary))) -> Ok(Binary(binary))
+    websocket_.WebsocketFrame(ws.Data(ws.BinaryFrame(binary))) ->
+      Ok(Binary(binary))
     websocket_.UserMessage(user_message) -> Ok(User(user_message))
     _ -> Error(Nil)
   }
@@ -605,14 +628,15 @@ fn transform_websocket_message(
 ///  
 pub fn upgrade_websocket(
   req: Request(Connection),
-  on_init on_init: fn(WebsocketConnection, process.Selector(user_message)) ->
-    #(user_state, process.Selector(user_message)),
+  on_init on_init: fn(WebsocketConnection, Selector(user_message)) ->
+    #(user_state, Selector(user_message)),
   handler handler: fn(
     WebsocketConnection,
     user_state,
     WebsocketMessage(user_message),
   ) ->
     Next(user_state),
+  on_close on_close: fn(WebsocketConnection, user_state) -> Nil,
 ) -> Response(ResponseBody) {
   let handler = fn(conn, state, msg) {
     transform_websocket_message(msg)
@@ -636,6 +660,7 @@ pub fn upgrade_websocket(
         socket,
         on_init,
         handler,
+        on_close,
         extensions,
         permessage_deflate,
       )
@@ -680,7 +705,9 @@ pub fn send_text_frame(
   )
 }
 
-// EXPERIMENTAL ----------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// EXPERIMENTAL
+// -----------------------------------------------------------------------------
 
 /// Experimental function that simplifies error handling in handlers when
 /// working with `Result` type.

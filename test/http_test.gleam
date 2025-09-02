@@ -18,7 +18,7 @@ pub fn chunked_test() {
         Error(_) -> response.new(500) |> ewe.empty()
       }
     })
-    |> ewe.with_port(8080)
+    |> ewe.listening(port: 8080)
     |> ewe.start()
 
   let req =

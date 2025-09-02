@@ -1,3 +1,6 @@
+// -----------------------------------------------------------------------------
+// IMPORTS
+// -----------------------------------------------------------------------------
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request.{type Request}
@@ -15,16 +18,27 @@ import ewe/internal/http.{
   TextData, WebsocketConnection,
 } as http_
 
+// -----------------------------------------------------------------------------
+// TYPES
+// -----------------------------------------------------------------------------
+
+// Represents the reason for exiting the handler loop
 type ExitReason {
   Normal
   Abnormal(reason: String)
 }
 
+// Control flow for the handler loop
 type Next {
   Continue
   Stop(ExitReason)
 }
 
+// -----------------------------------------------------------------------------
+// PUBLIC API
+// -----------------------------------------------------------------------------
+
+/// Main handler loop that processes HTTP requests
 pub fn loop(
   handler: fn(Request(Connection)) -> Response(ResponseBody),
   on_crash: Response(ResponseBody),
@@ -45,6 +59,11 @@ pub fn loop(
   }
 }
 
+// -----------------------------------------------------------------------------
+// REQUEST HANDLING
+// -----------------------------------------------------------------------------
+
+/// Calls the user-provided handler function with error handling
 fn call_handler(
   req: request.Request(Connection),
   handler: fn(Request(Connection)) -> Response(ResponseBody),
@@ -64,6 +83,11 @@ fn call_handler(
   }
 }
 
+// -----------------------------------------------------------------------------
+// RESPONSE HANDLING
+// -----------------------------------------------------------------------------
+
+/// Handles the response body and sends it to the client
 fn handle_resp_body(
   req: Request(Connection),
   resp: Response(ResponseBody),

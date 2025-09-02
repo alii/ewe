@@ -1,7 +1,14 @@
+// -----------------------------------------------------------------------------
+// IMPORTS
+// -----------------------------------------------------------------------------
 import gleam/erlang/process
 import gleam/option
 import gleam/otp/actor
 import gleam/otp/supervision
+
+// -----------------------------------------------------------------------------
+// TYPES
+// -----------------------------------------------------------------------------
 
 pub type Message(a) {
   GetInfo(reply_to: process.Subject(Result(a, Nil)))
@@ -9,7 +16,12 @@ pub type Message(a) {
   Shutdown
 }
 
-pub fn start_worker(
+// -----------------------------------------------------------------------------
+// API
+// -----------------------------------------------------------------------------
+
+/// Creates a worker for the information actor
+pub fn worker(
   name: process.Name(Message(a)),
 ) -> supervision.ChildSpecification(process.Subject(Message(a))) {
   let info_actor =
@@ -30,10 +42,12 @@ pub fn start_worker(
   supervision.worker(fn() { info_actor })
 }
 
+/// Gets the information from the information actor
 pub fn get(subject: process.Subject(Message(a))) -> Result(a, Nil) {
   actor.call(subject, 10_000, GetInfo)
 }
 
+/// Sets the information in the information actor
 pub fn set(subject: process.Subject(Message(a)), info: a) -> Nil {
   actor.send(subject, SetInfo(info))
 }

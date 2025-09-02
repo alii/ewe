@@ -1,8 +1,16 @@
+// -----------------------------------------------------------------------------
+// IMPORTS
+// -----------------------------------------------------------------------------
 import gleam/bytes_tree
 import gleam/http/response
 import gleam/int
 import gleam/list
 
+// -----------------------------------------------------------------------------
+// PUBLIC API
+// -----------------------------------------------------------------------------
+
+/// Encodes an HTTP response into bytes
 pub fn encode_response(
   response: response.Response(bytes_tree.BytesTree),
 ) -> bytes_tree.BytesTree {
@@ -12,6 +20,11 @@ pub fn encode_response(
   |> bytes_tree.append_tree(response.body)
 }
 
+// -----------------------------------------------------------------------------
+// ENCODING
+// -----------------------------------------------------------------------------
+
+/// Encodes the HTTP status line
 fn encode_status_line(status: Int) -> BitArray {
   let status_name = status_to_bit_array(status)
   let status = int.to_string(status)
@@ -19,6 +32,7 @@ fn encode_status_line(status: Int) -> BitArray {
   <<"HTTP/1.1 ", status:utf8, " ", status_name:bits, "\r\n">>
 }
 
+/// Encodes HTTP headers into bytes
 fn encode_headers(headers: List(#(String, String))) -> BitArray {
   let headers =
     list.fold(headers, <<>>, fn(acc, headers) {
@@ -30,6 +44,11 @@ fn encode_headers(headers: List(#(String, String))) -> BitArray {
   <<headers:bits, "\r\n">>
 }
 
+// -----------------------------------------------------------------------------
+// MAPPING
+// -----------------------------------------------------------------------------
+
+/// Maps HTTP status codes to their text descriptions
 fn status_to_bit_array(status: Int) -> BitArray {
   case status {
     100 -> <<"Continue">>
