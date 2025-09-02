@@ -2,6 +2,7 @@
 
 # Unreleased
 
+- Add internal `Buffer` type for handling HTTP parsing.
 - Add `ewe.quiet` for setting empty `on_start` function.
 - Rename multiple functions and types, add aliases for clarity.
 - Add `ewe.on_close` argument for WebSocket upgrade function.
