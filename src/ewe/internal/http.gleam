@@ -6,25 +6,25 @@
 // -----------------------------------------------------------------------------
 import gleam/bit_array
 import gleam/bool
-import gleam/bytes_tree
+import gleam/bytes_tree.{type BytesTree}
 import gleam/dict.{type Dict}
 import gleam/erlang/atom
-import gleam/erlang/process
+import gleam/erlang/process.{type Selector}
 import gleam/http
 import gleam/http/request.{type Request, Request}
-import gleam/http/response
+import gleam/http/response.{type Response}
 import gleam/int
 import gleam/list
-import gleam/option
+import gleam/option.{type Option, None, Some}
 import gleam/result.{replace_error, try}
-import gleam/set
+import gleam/set.{type Set}
 import gleam/string
-import gleam/string_tree
+import gleam/string_tree.{type StringTree}
 import gleam/uri
 
 import glisten
-import glisten/socket
-import glisten/transport
+import glisten/socket.{type Socket}
+import glisten/transport.{type Transport}
 
 import gramps/websocket as ws
 
@@ -41,11 +41,11 @@ import ewe/internal/encoder
 // HTTP response body types
 pub type ResponseBody {
   TextData(String)
-  BytesData(bytes_tree.BytesTree)
+  BytesData(BytesTree)
   BitsData(BitArray)
-  StringTreeData(string_tree.StringTree)
+  StringTreeData(StringTree)
 
-  WebsocketConnection(process.Selector(process.Down))
+  WebsocketConnection(Selector(process.Down))
 
   Empty
 }
@@ -73,10 +73,10 @@ pub type ParseError {
 // HTTP connection
 pub type Connection {
   Connection(
-    transport: transport.Transport,
-    socket: socket.Socket,
-    buffer: buffer.Buffer,
-    http_version: option.Option(HttpVersion),
+    transport: Transport,
+    socket: Socket,
+    buffer: Buffer,
+    http_version: Option(HttpVersion),
   )
 }
 
@@ -102,7 +102,7 @@ pub type UpgradeWebsocketError {
 type BodyChunk {
   Done(rest: Buffer)
   Incomplete
-  Chunk(BitArray, rest: Buffer)
+  Chunk(BitArray, size: Int, rest: Buffer)
 }
 
 // -----------------------------------------------------------------------------
@@ -117,24 +117,24 @@ const max_reading_size = 1_000_000
 // -----------------------------------------------------------------------------
 
 /// Transforms a glisten connection to `Connection` type
-pub fn transform_connection(connection: glisten.Connection(a)) -> Connection {
+pub fn transform_connection(conn: glisten.Connection(a)) -> Connection {
   Connection(
-    transport: connection.transport,
-    socket: connection.socket,
+    transport: conn.transport,
+    socket: conn.socket,
     buffer: buffer.empty(),
-    http_version: option.None,
+    http_version: None,
   )
 }
 
 /// Parses an HTTP request from the given buffer
 pub fn parse_request(
-  connection: Connection,
+  conn: Connection,
   buffer: Buffer,
 ) -> Result(Request(Connection), ParseError) {
-  let transport = connection.transport
-  let socket = connection.socket
+  let transport = conn.transport
+  let socket = conn.socket
 
-  case decoder.decode_packet(HttpBin, buffer.data, []) {
+  case decoder.decode_packet(HttpBin, buffer) {
     Ok(Packet(HttpRequest(atom_method, AbsPath(target), version), rest)) -> {
       // Request Line
       use method <- try(
@@ -158,8 +158,8 @@ pub fn parse_request(
       use #(headers, rest) <- try(parse_headers(
         transport,
         socket,
-        buffer.new(rest),
-        dict.new(),
+        buffer: buffer.new(rest),
+        headers: dict.new(),
       ))
 
       // Forming the request
@@ -185,30 +185,26 @@ pub fn parse_request(
         method:,
         headers: dict.to_list(headers),
         body: Connection(
-          ..connection,
+          ..conn,
           buffer: buffer.new(rest),
-          http_version: option.Some(version),
+          http_version: Some(version),
         ),
         scheme:,
         host:,
-        port: option.Some(port),
+        port: Some(port),
         path: uri.path,
         query: uri.query,
       ))
     }
     Ok(More(size)) -> {
-      let read_size = option.unwrap(size, 0)
-
-      let sized_buffer = buffer.sized(connection.buffer, read_size)
-
       use new_buffer <- try(read_from_socket(
         transport,
         socket,
-        sized_buffer,
+        buffer: buffer.sized(buffer, option.unwrap(size, 0)),
         on_error: MalformedRequest,
       ))
 
-      parse_request(connection, new_buffer)
+      parse_request(conn, new_buffer)
     }
     _ -> Error(PacketDiscard)
   }
@@ -285,8 +281,8 @@ pub fn read_body(
 /// Upgrades an HTTP connection to WebSocket
 pub fn upgrade_websocket(
   req: Request(Connection),
-  transport: transport.Transport,
-  socket: socket.Socket,
+  transport: Transport,
+  socket: Socket,
 ) -> Result(#(List(String), Bool), UpgradeWebsocketError) {
   let assert option.Some(http_version) = req.body.http_version
 
@@ -351,9 +347,9 @@ pub fn upgrade_websocket(
 
 /// Appends default headers to HTTP responses
 pub fn append_default_headers(
-  resp: response.Response(bytes_tree.BytesTree),
+  resp: Response(BytesTree),
   version: HttpVersion,
-) -> response.Response(bytes_tree.BytesTree) {
+) -> Response(BytesTree) {
   let body_size = bytes_tree.byte_size(resp.body)
 
   let resp = case response.get_header(resp, "content-length") {
@@ -379,8 +375,8 @@ pub fn append_default_headers(
 
 /// Reads data from socket with timeout and size limits
 fn read_from_socket(
-  transport: transport.Transport,
-  socket: socket.Socket,
+  transport transport: Transport,
+  socket socket: Socket,
   buffer buffer: Buffer,
   on_error on_error: ParseError,
 ) -> Result(Buffer, ParseError) {
@@ -395,7 +391,7 @@ fn read_from_socket(
 
   case new_buffer.remaining {
     0 -> Ok(new_buffer)
-    _ -> read_from_socket(transport, socket, new_buffer, on_error:)
+    _ -> read_from_socket(transport:, socket:, buffer: new_buffer, on_error:)
   }
 }
 
@@ -405,12 +401,12 @@ fn read_from_socket(
 
 /// Parses HTTP headers from the buffer
 fn parse_headers(
-  transport: transport.Transport,
-  socket: socket.Socket,
-  buffer: Buffer,
-  headers: Dict(String, String),
+  transport transport: Transport,
+  socket socket: Socket,
+  buffer buffer: Buffer,
+  headers headers: Dict(String, String),
 ) {
-  case decoder.decode_packet(HttphBin, buffer.data, []) {
+  case decoder.decode_packet(HttphBin, buffer) {
     Ok(Packet(HttpEoh, rest)) -> Ok(#(headers, rest))
     Ok(Packet(HttpHeader(idx, field, value), rest)) -> {
       use field <- try(case decoder.formatted_field_by_idx(idx) {
@@ -430,7 +426,7 @@ fn parse_headers(
       let new_buffer = buffer.new(rest)
 
       insert_header(headers, field, value)
-      |> parse_headers(transport, socket, new_buffer, _)
+      |> parse_headers(transport:, socket:, buffer: new_buffer, headers: _)
     }
     Ok(More(size)) -> {
       let read_size = option.unwrap(size, 0)
@@ -438,13 +434,13 @@ fn parse_headers(
       let sized_buffer = buffer.sized(buffer, read_size)
 
       use new_buffer <- try(read_from_socket(
-        transport,
-        socket,
-        sized_buffer,
+        transport:,
+        socket:,
+        buffer: sized_buffer,
         on_error: InvalidHeaders,
       ))
 
-      parse_headers(transport, socket, new_buffer, headers)
+      parse_headers(transport:, socket:, buffer: new_buffer, headers:)
     }
     _ -> Error(InvalidHeaders)
   }
@@ -511,40 +507,43 @@ fn handle_continue(req: Request(Connection)) -> Result(Nil, ParseError) {
 
 /// Reads chunked transfer-encoded body
 fn read_chunked_body(
-  transport: transport.Transport,
-  socket: socket.Socket,
-  buffer: Buffer,
-  body: BitArray,
-  size_limit: Int,
-  total_size: Int,
+  transport transport: Transport,
+  socket socket: Socket,
+  buffer buffer: Buffer,
+  accumulated_body accumulated_body: BitArray,
+  body_size_limit body_size_limit: Int,
+  body_current_size body_current_size: Int,
 ) -> Result(#(BitArray, Buffer), ParseError) {
-  use <- bool.guard(total_size > size_limit, Error(BodyTooLarge))
+  use <- bool.guard(body_current_size > body_size_limit, Error(BodyTooLarge))
 
   case parse_body_chunk(buffer) {
-    Ok(Done(rest)) -> Ok(#(body, rest))
+    Ok(Done(rest)) -> Ok(#(accumulated_body, rest))
     Ok(Incomplete) -> {
       use new_buffer <- try(read_from_socket(
-        transport,
-        socket,
-        buffer,
+        transport:,
+        socket:,
+        buffer:,
         on_error: InvalidBody,
       ))
 
       read_chunked_body(
-        transport,
-        socket,
-        new_buffer,
-        body,
-        size_limit,
-        total_size,
+        transport:,
+        socket:,
+        buffer: new_buffer,
+        accumulated_body:,
+        body_size_limit:,
+        body_current_size:,
       )
     }
-    Ok(Chunk(chunk, rest)) -> {
-      let body = <<body:bits, chunk:bits>>
-      let total_size = total_size + bit_array.byte_size(chunk)
-
-      read_chunked_body(transport, socket, rest, body, size_limit, total_size)
-    }
+    Ok(Chunk(chunk, size, rest)) ->
+      read_chunked_body(
+        transport:,
+        socket:,
+        buffer: rest,
+        accumulated_body: <<accumulated_body:bits, chunk:bits>>,
+        body_size_limit:,
+        body_current_size: body_current_size + size,
+      )
     Error(error) -> Error(error)
   }
 }
@@ -563,7 +562,7 @@ fn parse_body_chunk(buffer: Buffer) -> Result(BodyChunk, ParseError) {
       case split(rest, <<"\r\n">>, []) {
         [chunk, rest] -> {
           case bit_array.byte_size(chunk) == size {
-            True -> Ok(Chunk(chunk, buffer.new(rest)))
+            True -> Ok(Chunk(chunk, size, buffer.new(rest)))
             False -> Error(InvalidBody)
           }
         }
@@ -581,10 +580,10 @@ fn parse_body_chunk(buffer: Buffer) -> Result(BodyChunk, ParseError) {
 /// Handles trailer headers in chunked responses
 fn handle_trailers(
   req: Request(BitArray),
-  set: set.Set(String),
+  set: Set(String),
   rest: Buffer,
 ) -> Request(BitArray) {
-  case decoder.decode_packet(HttphBin, rest.data, []) {
+  case decoder.decode_packet(HttphBin, rest) {
     Ok(Packet(HttpEoh, _)) -> req
     Ok(Packet(HttpHeader(idx, field, value), header_rest)) -> {
       let field_name = case decoder.formatted_field_by_idx(idx) {

@@ -1,6 +1,7 @@
 // -----------------------------------------------------------------------------
 // IMPORTS
 // -----------------------------------------------------------------------------
+import ewe/internal/buffer
 import gleam/dynamic
 import gleam/http
 import gleam/option
@@ -41,9 +42,16 @@ pub type Packet {
 // DECODING
 // -----------------------------------------------------------------------------
 
+pub fn decode_packet(
+  type_ type_: PacketType,
+  buffer buffer: buffer.Buffer,
+) -> Result(Packet, dynamic.Dynamic) {
+  decode_packet_ffi(type_, buffer.data, [])
+}
+
 /// Decodes HTTP packets using external FFI implementation
 @external(erlang, "ewe_ffi", "decode_packet")
-pub fn decode_packet(
+fn decode_packet_ffi(
   type_ type_: PacketType,
   packet packet: BitArray,
   options options: List(a),
