@@ -1,6 +1,6 @@
 # Changelog
 
-# Unreleased
+# v0.8.0
 
 - Add `ewe.stream_body` for streaming the request body (including chunked encoding).
 - Simplified `Builder` type.
