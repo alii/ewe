@@ -18,21 +18,30 @@ gleam add ewe@0.6.0 gleam_http gleam_erlang gleam_json
 ⚠️ This package is in WIP stage, so public API will change quite often.
 
 ```gleam
+import gleam/bit_array
 import gleam/erlang/process.{type Subject}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
+import gleam/int
 import gleam/io
 import gleam/json
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
-import gleam/string_tree.{type StringTree}
 
 import ewe
 
-fn error_json(error: String) -> StringTree {
+const internal_error = "Something went wrong, try again later"
+
+const not_found_error = "Not found"
+
+const invalid_request_error = "Invalid request"
+
+fn failed_response(status: Int, error: String) -> Response(ewe.ResponseBody) {
   json.object([#("error", json.string(error))])
   |> json.to_string_tree()
+  |> ewe.json(response.new(status), _)
 }
 
 pub fn main() {
@@ -41,10 +50,7 @@ pub fn main() {
 
   let assert Ok(_) =
     ewe.new(handler(_, registry))
-    |> ewe.on_crash(
-      error_json("Something went wrong, try again later")
-      |> ewe.json(response.new(500), _),
-    )
+    |> ewe.on_crash(failed_response(500, internal_error))
     |> ewe.bind_all()
     |> ewe.listening(port: 4000)
     |> ewe.start()
@@ -60,7 +66,8 @@ fn handler(
     ["hello", name] ->
       response.new(200)
       |> ewe.text("Hello, " <> name <> "!")
-    ["echo"] -> handle_echo(req)
+    ["echo"] -> handle_echo(req, None)
+    ["stream", sized] -> handle_echo(req, Some(sized))
     ["ws"] ->
       ewe.upgrade_websocket(
         req,
@@ -78,31 +85,57 @@ fn handler(
       announce(registry, text)
       ewe.empty(response.new(200))
     }
-    _ ->
-      response.new(404)
-      |> ewe.json(error_json("Not found"))
+    _ -> failed_response(404, not_found_error)
   }
 }
 
-fn handle_echo(req: Request(ewe.Connection)) -> Response(ewe.ResponseBody) {
+fn consume_body(consume: ewe.Consumer, size: Int, acc: BitArray) -> BitArray {
+  case consume(size) {
+    Ok(ewe.Done) | Error(_) -> acc
+    Ok(ewe.Consumed(data, next)) -> {
+      io.println(
+        "Consumed "
+        <> int.to_string(bit_array.byte_size(data))
+        <> " bytes: "
+        <> bit_array.to_string(data) |> result.unwrap(""),
+      )
+
+      consume_body(next, size, <<acc:bits, data:bits>>)
+    }
+  }
+}
+
+fn handle_echo(
+  req: Request(ewe.Connection),
+  stream: Option(String),
+) -> Response(ewe.ResponseBody) {
   let content_type =
     request.get_header(req, "content-type")
     |> result.unwrap("text/plain")
 
-  use <- ewe.use_expression()
+  let invalid_body = failed_response(400, invalid_request_error)
 
-  use req <- result.try(
-    ewe.read_body(req, 1024)
-    |> result.replace_error(
-      response.new(400)
-      |> ewe.json(error_json("Invalid request body")),
-    ),
-  )
+  case option.map(stream, int.parse) {
+    Some(Ok(size)) -> {
+      let assert Ok(consumer) = ewe.stream_body(req)
 
-  response.new(200)
-  |> ewe.bits(req.body)
-  |> response.set_header("content-type", content_type)
-  |> Ok
+      let body = consume_body(consumer, size, <<>>)
+
+      response.new(200)
+      |> ewe.bits(body)
+      |> response.set_header("content-type", content_type)
+    }
+    Some(Error(_)) -> invalid_body
+    None -> {
+      case ewe.read_body(req, 1024) {
+        Ok(req) ->
+          response.new(200)
+          |> ewe.bits(req.body)
+          |> response.set_header("content-type", content_type)
+        Error(_) -> invalid_body
+      }
+    }
+  }
 }
 
 type Broadcast {

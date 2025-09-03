@@ -98,11 +98,16 @@ pub type UpgradeWebsocketError {
   MissingWebsocketKey
 }
 
+pub type Stream {
+  Consumed(data: BitArray, next: fn(Int) -> Result(Stream, ParseError))
+  Done
+}
+
 // Chunked body parsing result
 type BodyChunk {
-  Done(rest: Buffer)
   Incomplete
   Chunk(BitArray, size: Int, rest: Buffer)
+  FinalChunk(rest: Buffer)
 }
 
 // -----------------------------------------------------------------------------
@@ -278,6 +283,30 @@ pub fn read_body(
   }
 }
 
+/// Streams the HTTP request body
+pub fn stream_body(req: Request(Connection)) {
+  use _ <- result.try(
+    handle_continue(req)
+    |> result.replace_error(InvalidBody),
+  )
+
+  case request.get_header(req, "transfer-encoding") {
+    Ok("chunked") -> todo
+    _ -> {
+      let content_length =
+        request.get_header(req, "content-length")
+        |> result.try(int.parse)
+        |> result.unwrap(0)
+
+      let remaining = content_length - bit_array.byte_size(req.body.buffer.data)
+      let stream_buffer = buffer.sized(req.body.buffer, int.max(0, remaining))
+
+      do_stream_body(req, stream_buffer)
+      |> Ok
+    }
+  }
+}
+
 /// Upgrades an HTTP connection to WebSocket
 pub fn upgrade_websocket(
   req: Request(Connection),
@@ -396,7 +425,7 @@ fn read_from_socket(
 }
 
 // -----------------------------------------------------------------------------
-// HEADER PARSING
+// HEADERS
 // -----------------------------------------------------------------------------
 
 /// Parses HTTP headers from the buffer
@@ -482,7 +511,7 @@ fn available_cookie_key(headers: Dict(String, String), idx: Int) -> String {
 // -----------------------------------------------------------------------------
 
 /// Handles 100-continue expectations
-fn handle_continue(req: Request(Connection)) -> Result(Nil, ParseError) {
+pub fn handle_continue(req: Request(Connection)) -> Result(Nil, ParseError) {
   let expect =
     req.headers
     |> list.find(fn(tupple) {
@@ -502,7 +531,53 @@ fn handle_continue(req: Request(Connection)) -> Result(Nil, ParseError) {
 }
 
 // -----------------------------------------------------------------------------
-// CHUNKED BODY PARSING
+// BODY
+// -----------------------------------------------------------------------------
+
+fn do_stream_body(req: Request(Connection), buffer: Buffer) {
+  fn(size: Int) {
+    let buffer_size = bit_array.byte_size(buffer.data)
+
+    case buffer.remaining, buffer_size {
+      // Request body is fully consumed
+      0, 0 -> Ok(Done)
+
+      // Request body is supposed to be fully consumed, but there is more data in buffer
+      0, _ -> {
+        let #(data, rest) = buffer.split(buffer, size)
+        Ok(Consumed(data, do_stream_body(req, buffer.new(rest))))
+      }
+
+      // Request body is not fully consumed, and we there is enough data in buffer to consume `size` bytes
+      _, buffer_size if buffer_size >= size -> {
+        let #(data, rest) = buffer.split(buffer, size)
+        let new_buffer = buffer.new_sized(rest, buffer.remaining)
+        Ok(Consumed(data, do_stream_body(req, new_buffer)))
+      }
+
+      _, _ -> {
+        use read_buffer <- try(read_from_socket(
+          transport: req.body.transport,
+          socket: req.body.socket,
+          buffer: buffer.empty(),
+          on_error: InvalidBody,
+        ))
+
+        let new_buffer =
+          buffer.new_sized(
+            <<buffer.data:bits, read_buffer.data:bits>>,
+            int.max(0, buffer.remaining - bit_array.byte_size(read_buffer.data)),
+          )
+
+        let #(data, rest) = buffer.split(new_buffer, size)
+        Ok(Consumed(data, do_stream_body(req, buffer.new(rest))))
+      }
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+// CHUNKED BODY
 // -----------------------------------------------------------------------------
 
 /// Reads chunked transfer-encoded body
@@ -517,7 +592,7 @@ fn read_chunked_body(
   use <- bool.guard(body_current_size > body_size_limit, Error(BodyTooLarge))
 
   case parse_body_chunk(buffer) {
-    Ok(Done(rest)) -> Ok(#(accumulated_body, rest))
+    Ok(FinalChunk(rest)) -> Ok(#(accumulated_body, rest))
     Ok(Incomplete) -> {
       use new_buffer <- try(read_from_socket(
         transport:,
@@ -551,7 +626,7 @@ fn read_chunked_body(
 /// Parses a single chunk from the chunked body
 fn parse_body_chunk(buffer: Buffer) -> Result(BodyChunk, ParseError) {
   case split(buffer.data, <<"\r\n">>, []) {
-    [<<"0">>, rest] -> Ok(Done(buffer.new(rest)))
+    [<<"0">>, rest] -> Ok(FinalChunk(buffer.new(rest)))
     [chunk_size, rest] -> {
       use size <- try(
         bit_array.to_string(chunk_size)

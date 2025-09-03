@@ -2,7 +2,9 @@
 
 # Unreleased
 
-- Add internal `Buffer` type for handling HTTP parsing.
+- Add `ewe.stream_body` for streaming the request body.
+- Simplified `Builder` type.
+- Add internal `Buffer` type.
 - Add `ewe.quiet` for setting empty `on_start` function.
 - Rename multiple functions and types, add aliases for clarity.
 - Add `ewe.on_close` argument for WebSocket upgrade function.

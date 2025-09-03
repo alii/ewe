@@ -105,6 +105,7 @@ import glisten/transport
 
 import gramps/websocket as ws
 
+import ewe/internal/buffer
 import ewe/internal/file as file_
 import ewe/internal/handler as handler_
 import ewe/internal/http as http_
@@ -304,8 +305,8 @@ pub fn json(
 // BUILDER
 // -----------------------------------------------------------------------------
 
-type Handler(body) =
-  fn(Request(body)) -> Response(ResponseBody)
+type Handler =
+  fn(Request(Connection)) -> Response(ResponseBody)
 
 type OnStart =
   fn(http.Scheme, SocketAddress) -> Nil
@@ -323,9 +324,9 @@ type OnStart =
 /// - `ewe.quiet`
 /// - `ewe.on_crash`
 /// 
-pub opaque type Builder(body) {
+pub opaque type Builder {
   Builder(
-    handler: Handler(body),
+    handler: Handler,
     port: Int,
     interface: String,
     ipv6: Bool,
@@ -347,7 +348,7 @@ pub opaque type Builder(body) {
 /// - on_start: prints `Listening on <scheme>://<ip_address>:<port>`
 /// - on_crash: empty 500 response
 /// 
-pub fn new(handler: Handler(body)) -> Builder(body) {
+pub fn new(handler: Handler) -> Builder {
   Builder(
     handler:,
     port: 8080,
@@ -376,44 +377,41 @@ pub fn new(handler: Handler(body)) -> Builder(body) {
 
 /// Binds server to a specific interface. Crashes program if interface is invalid.
 /// 
-pub fn bind(
-  builder: Builder(body),
-  interface interface: String,
-) -> Builder(body) {
+pub fn bind(builder: Builder, interface interface: String) -> Builder {
   Builder(..builder, interface:)
 }
 
 /// Binds server to all interfaces.
 /// 
-pub fn bind_all(builder: Builder(body)) -> Builder(body) {
+pub fn bind_all(builder: Builder) -> Builder {
   Builder(..builder, interface: "0.0.0.0")
 }
 
 /// Sets listening port for server.
 /// 
-pub fn listening(builder: Builder(body), port port: Int) -> Builder(body) {
+pub fn listening(builder: Builder, port port: Int) -> Builder {
   Builder(..builder, port:)
 }
 
 /// Sets listening port for server to a random port. Useful for testing.
 /// 
-pub fn listening_random(builder: Builder(body)) -> Builder(body) {
+pub fn listening_random(builder: Builder) -> Builder {
   Builder(..builder, port: 0)
 }
 
 /// Enables IPv6 support.
 /// 
-pub fn enable_ipv6(builder: Builder(body)) -> Builder(body) {
+pub fn enable_ipv6(builder: Builder) -> Builder {
   Builder(..builder, ipv6: True)
 }
 
 /// Enables TLS support, requires certificate and key file.
 /// 
 pub fn enable_tls(
-  builder: Builder(body),
+  builder: Builder,
   certificate_file certificate_file: String,
   key_file key_file: String,
-) -> Builder(body) {
+) -> Builder {
   let cert = case file_.open(certificate_file) {
     Ok(_) -> certificate_file
     Error(_) -> panic as "Failed to find cert file"
@@ -431,33 +429,30 @@ pub fn enable_tls(
 /// use `ewe.get_server_info` after server starts.
 /// 
 pub fn set_information_name(
-  builder: Builder(body),
+  builder: Builder,
   name: process.Name(information.Message(SocketAddress)),
-) -> Builder(body) {
+) -> Builder {
   Builder(..builder, information_name: name)
 }
 
 /// Sets a custom handler that will be called after server starts.
 /// 
 pub fn on_start(
-  builder: Builder(body),
+  builder: Builder,
   on_start: fn(http.Scheme, SocketAddress) -> Nil,
-) -> Builder(body) {
+) -> Builder {
   Builder(..builder, on_start:)
 }
 
 /// Sets empty `on_start` function.
 /// 
-pub fn quiet(builder: Builder(body)) -> Builder(body) {
+pub fn quiet(builder: Builder) -> Builder {
   Builder(..builder, on_start: fn(_, _) { Nil })
 }
 
 /// Sets a custom response that will be sent when server crashes.
 /// 
-pub fn on_crash(
-  builder: Builder(body),
-  on_crash: Response(ResponseBody),
-) -> Builder(body) {
+pub fn on_crash(builder: Builder, on_crash: Response(ResponseBody)) -> Builder {
   Builder(..builder, on_crash:)
 }
 
@@ -468,7 +463,7 @@ pub fn on_crash(
 /// Starts the server.
 /// 
 pub fn start(
-  builder: Builder(Connection),
+  builder: Builder,
 ) -> Result(actor.Started(Supervisor), actor.StartError) {
   let name = process.new_name("ewe_glisten")
 
@@ -523,7 +518,7 @@ pub fn start(
 /// Creates a supervisor that can be appended to a supervision tree.
 /// 
 pub fn supervised(
-  builder: Builder(Connection),
+  builder: Builder,
 ) -> supervision.ChildSpecification(supervisor.Supervisor) {
   supervision.supervisor(fn() { start(builder) })
 }
@@ -554,6 +549,38 @@ pub fn read_body(
     Ok(req) -> Ok(req)
     Error(http_.BodyTooLarge) -> Error(BodyTooLarge)
     Error(_) -> Error(InvalidBody)
+  }
+}
+
+// TODO: add docs
+
+pub type Consumer =
+  fn(Int) -> Result(Stream, BodyError)
+
+pub type Stream {
+  Consumed(data: BitArray, next: Consumer)
+  Done
+}
+
+pub fn stream_body(req: Request(Connection)) {
+  case http_.stream_body(req) {
+    Ok(consumer) -> Ok(consumer_adapter(consumer))
+    Error(_) -> Error(InvalidBody)
+  }
+}
+
+// Helper function to convert internal consumer to public consumer
+fn consumer_adapter(
+  internal_consumer: fn(Int) -> Result(http_.Stream, http_.ParseError),
+) -> Consumer {
+  fn(size) {
+    case internal_consumer(size) {
+      Ok(http_.Done) -> Ok(Done)
+      Ok(http_.Consumed(data, next)) -> {
+        Ok(Consumed(data, consumer_adapter(next)))
+      }
+      Error(_) -> Error(InvalidBody)
+    }
   }
 }
 

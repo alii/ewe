@@ -29,7 +29,7 @@ pub fn echoer() {
   })
 }
 
-pub fn start(builder: ewe.Builder(ewe.Connection)) {
+pub fn start(builder: ewe.Builder) {
   let name = process.new_name("ewe_test_server")
 
   let _ =
