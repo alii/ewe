@@ -677,7 +677,7 @@ fn do_stream_body_chunked(
         Ok(Consumed(data, fn(_) { Ok(Done) }))
       Ok(#(data, state)) ->
         Ok(Consumed(data, do_stream_body_chunked(req, state)))
-      Error(error) -> Error(InvalidBody)
+      Error(_) -> Error(InvalidBody)
     }
   }
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+# v0.8.1
+
+- Quick documentation fix
+
 # v0.8.0
 
 - Add `ewe.stream_body` for streaming the request body (including chunked encoding).
