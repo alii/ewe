@@ -2,7 +2,7 @@
 
 # Unreleased
 
-- Add `ewe.stream_body` for streaming the request body.
+- Add `ewe.stream_body` for streaming the request body (including chunked encoding).
 - Simplified `Builder` type.
 - Add internal `Buffer` type.
 - Add `ewe.quiet` for setting empty `on_start` function.

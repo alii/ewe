@@ -60,6 +60,7 @@
 //// - [supervised](#supervised)
 //// #### Request
 //// - [read_body](#read_body)
+//// - [stream_body](#stream_body)
 //// #### Response
 //// - [text](#text)
 //// - [bytes](#bytes)
@@ -105,7 +106,6 @@ import glisten/transport
 
 import gramps/websocket as ws
 
-import ewe/internal/buffer
 import ewe/internal/file as file_
 import ewe/internal/handler as handler_
 import ewe/internal/http as http_
@@ -552,17 +552,19 @@ pub fn read_body(
   }
 }
 
-// TODO: add docs
-
+/// Alias for consumer type for reading N amount of bytes from the request body stream.
 pub type Consumer =
   fn(Int) -> Result(Stream, BodyError)
 
+/// Used to track the progress of reading the request body stream.
 pub type Stream {
   Consumed(data: BitArray, next: Consumer)
   Done
 }
 
-pub fn stream_body(req: Request(Connection)) {
+/// Streams the request body.
+/// 
+pub fn stream_body(req: Request(Connection)) -> Result(Consumer, BodyError) {
   case http_.stream_body(req) {
     Ok(consumer) -> Ok(consumer_adapter(consumer))
     Error(_) -> Error(InvalidBody)

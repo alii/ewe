@@ -103,11 +103,18 @@ pub type Stream {
   Done
 }
 
+type Consumer =
+  fn(Int) -> Result(Stream, ParseError)
+
 // Chunked body parsing result
 type BodyChunk {
   Incomplete
   Chunk(BitArray, size: Int, rest: Buffer)
   FinalChunk(rest: Buffer)
+}
+
+type ChunkedStreamState {
+  ChunkedStreamState(data: Buffer, chunk: Buffer, done: Bool)
 }
 
 // -----------------------------------------------------------------------------
@@ -291,7 +298,10 @@ pub fn stream_body(req: Request(Connection)) {
   )
 
   case request.get_header(req, "transfer-encoding") {
-    Ok("chunked") -> todo
+    Ok("chunked") -> {
+      let state = ChunkedStreamState(buffer.empty(), req.body.buffer, False)
+      Ok(do_stream_body_chunked(req, state))
+    }
     _ -> {
       let content_length =
         request.get_header(req, "content-length")
@@ -534,7 +544,7 @@ pub fn handle_continue(req: Request(Connection)) -> Result(Nil, ParseError) {
 // BODY
 // -----------------------------------------------------------------------------
 
-fn do_stream_body(req: Request(Connection), buffer: Buffer) {
+fn do_stream_body(req: Request(Connection), buffer: Buffer) -> Consumer {
   fn(size: Int) {
     let buffer_size = bit_array.byte_size(buffer.data)
 
@@ -542,19 +552,20 @@ fn do_stream_body(req: Request(Connection), buffer: Buffer) {
       // Request body is fully consumed
       0, 0 -> Ok(Done)
 
-      // Request body is supposed to be fully consumed, but there is more data in buffer
+      // Request body is supposed to be fully consumed but there is more data in buffer
       0, _ -> {
         let #(data, rest) = buffer.split(buffer, size)
         Ok(Consumed(data, do_stream_body(req, buffer.new(rest))))
       }
 
-      // Request body is not fully consumed, and we there is enough data in buffer to consume `size` bytes
+      // Request body is not fully consumed and there is enough data in buffer to consume `size` bytes
       _, buffer_size if buffer_size >= size -> {
         let #(data, rest) = buffer.split(buffer, size)
         let new_buffer = buffer.new_sized(rest, buffer.remaining)
         Ok(Consumed(data, do_stream_body(req, new_buffer)))
       }
 
+      // Request body is not fully consumed and there is not enough data in buffer to consume `size` bytes
       _, _ -> {
         use read_buffer <- try(read_from_socket(
           transport: req.body.transport,
@@ -645,6 +656,94 @@ fn parse_body_chunk(buffer: Buffer) -> Result(BodyChunk, ParseError) {
       }
     }
     _ -> Ok(Incomplete)
+  }
+}
+
+fn do_stream_body_chunked(
+  req: Request(Connection),
+  chunked_stream_state: ChunkedStreamState,
+) -> Consumer {
+  fn(size: Int) {
+    let read_result =
+      read_from_socket_until(
+        transport: req.body.transport,
+        socket: req.body.socket,
+        state: chunked_stream_state,
+        until: size,
+      )
+
+    case read_result {
+      Ok(#(data, ChunkedStreamState(done: True, ..))) ->
+        Ok(Consumed(data, fn(_) { Ok(Done) }))
+      Ok(#(data, state)) ->
+        Ok(Consumed(data, do_stream_body_chunked(req, state)))
+      Error(error) -> Error(InvalidBody)
+    }
+  }
+}
+
+fn read_from_socket_until(
+  transport transport: Transport,
+  socket socket: Socket,
+  state state: ChunkedStreamState,
+  until until: Int,
+) -> Result(#(BitArray, ChunkedStreamState), ParseError) {
+  let size = bit_array.byte_size(state.data.data)
+
+  case state.done, size {
+    // Data buffer contains enough data to consume `until` bytes
+    _, size if size >= until -> {
+      let #(data, rest) = buffer.split(state.data, until)
+      Ok(#(data, ChunkedStreamState(..state, data: buffer.new(rest))))
+    }
+
+    // Accomplished the reading
+    True, _ -> Ok(#(state.data.data, state))
+
+    // Data buffer does not contain enough data to consume `until` bytes
+    False, _ -> {
+      case parse_body_chunk(state.chunk) {
+        Ok(FinalChunk(_)) ->
+          read_from_socket_until(
+            transport:,
+            socket:,
+            state: ChunkedStreamState(
+              ..state,
+              chunk: buffer.empty(),
+              done: True,
+            ),
+            until:,
+          )
+        Ok(Incomplete) -> {
+          use new_buffer <- try(read_from_socket(
+            transport:,
+            socket:,
+            buffer: state.chunk,
+            on_error: InvalidBody,
+          ))
+
+          read_from_socket_until(
+            transport:,
+            socket:,
+            state: ChunkedStreamState(..state, chunk: new_buffer),
+            until:,
+          )
+        }
+        Ok(Chunk(chunk, size, rest)) -> {
+          read_from_socket_until(
+            transport:,
+            socket:,
+            state: ChunkedStreamState(
+              ..state,
+              data: buffer.append_size(state.data, chunk, size),
+              chunk: rest,
+            ),
+            until:,
+          )
+        }
+        Error(error) -> Error(error)
+      }
+    }
   }
 }
 
