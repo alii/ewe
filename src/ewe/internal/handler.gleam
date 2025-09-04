@@ -48,16 +48,32 @@ pub fn loop(
     let assert glisten.Packet(msg) = msg
     let http_conn = http_.transform_connection(conn)
 
-    http_.parse_request(http_conn, buffer.new(msg))
-    |> result.map(fn(req) {
-      case call_handler(req, handler, on_crash) {
-        Continue -> glisten.continue(state)
-        Stop(Normal) -> glisten.stop()
-        Stop(Abnormal(reason)) -> glisten.stop_abnormal(reason)
+    let parsed = http_.parse_request(http_conn, buffer.new(msg))
+
+    case parsed {
+      Ok(req) ->
+        case call_handler(req, handler, on_crash) {
+          Continue -> glisten.continue(state)
+          Stop(Normal) -> glisten.stop()
+          Stop(Abnormal(reason)) -> glisten.stop_abnormal(reason)
+        }
+
+      Error(reason) -> {
+        let status = case reason {
+          http_.InvalidVersion -> 505
+          _ -> 400
+        }
+
+        let _ =
+          response.new(status)
+          |> response.set_body(bytes_tree.new())
+          |> response.set_header("connection", "close")
+          |> encoder.encode_response()
+          |> transport.send(http_conn.transport, http_conn.socket, _)
+
+        glisten.stop()
       }
-    })
-    |> result.replace_error(glisten.stop())
-    |> result.unwrap_both()
+    }
   }
 }
 

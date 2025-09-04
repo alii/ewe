@@ -1,6 +1,6 @@
 -module(ewe_ffi).
 
--export([decode_packet/3, rescue/1]).
+-export([decode_packet/3, rescue/1, validate_field_value/1]).
 
 decode_packet(Type, Packet, Options) ->
   case erlang:decode_packet(Type, Packet, Options) of
@@ -27,4 +27,25 @@ rescue(Callable) ->
     error:Error -> {error, {errored, Error}};
     throw:Error -> {error, {thrown, Error}};
     exit:Error -> {error, {exited, Error}}
+  end.
+
+validate_field_value(Value) ->
+  case do_validate_field_value(Value) of
+    true -> {ok, Value};
+    false -> {error, nil}
+  end.
+
+% HTTP field values can contain:
+% - VCHAR: 0x21-0x7E (visible ASCII characters)
+% - WSP: 0x20 (space), 0x09 (tab)
+% - obs-text: 0x80-0xFF (for backward compatibility)
+% Invalid: control characters 0x00-0x08, 0x0A-0x1F, 0x7F
+do_validate_field_value(Value) ->
+  case Value of
+    <<>> -> true;
+    <<C, Rest/bitstring>> when C =:= 16#09
+    orelse (C >= 16#20 andalso C =< 16#7E)
+    orelse (C >= 16#80 andalso C =< 16#FF)
+    -> do_validate_field_value(Rest);
+  _ -> false
   end.

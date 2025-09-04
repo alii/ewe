@@ -57,6 +57,8 @@ pub type ParseError {
   // headers
   InvalidHeaders
   MissingHost
+  DuplicateHost
+  InvalidContentLength
 
   // body
   InvalidBody
@@ -177,17 +179,23 @@ pub fn parse_request(
         transport.Ssl(..) -> http.Https
       }
 
-      use #(host, port) <- try(
+      use host <- try(
         dict.get(headers, "host")
-        |> try(string.split_once(_, ":"))
         |> result.replace_error(MissingHost),
       )
 
+      let #(host, port) = case string.split_once(host, ":") {
+        Ok(#(host, port)) -> #(host, Some(port))
+        Error(_) -> #(host, None)
+      }
+
       let port =
-        int.parse(port)
-        |> result.unwrap(case scheme {
-          http.Http -> 80
-          http.Https -> 443
+        option.map(port, fn(port) {
+          int.parse(port)
+          |> result.unwrap(case scheme {
+            http.Http -> 80
+            http.Https -> 443
+          })
         })
 
       Ok(Request(
@@ -200,7 +208,7 @@ pub fn parse_request(
         ),
         scheme:,
         host:,
-        port: Some(port),
+        port:,
         path: uri.path,
         query: uri.query,
       ))
@@ -457,11 +465,30 @@ fn parse_headers(
       })
 
       use value <- try(
-        bit_array.to_string(value)
-        |> replace_error(InvalidHeaders),
+        validate_field_value(value) |> replace_error(InvalidHeaders),
       )
 
       let new_buffer = buffer.new(rest)
+
+      use _ <- try(case field {
+        "host" -> {
+          case dict.has_key(headers, field) {
+            True -> Error(DuplicateHost)
+            False -> Ok(Nil)
+          }
+        }
+        "content-length" -> {
+          int.parse(value)
+          |> result.try(fn(value) {
+            case value < 0 {
+              True -> Error(Nil)
+              False -> Ok(Nil)
+            }
+          })
+          |> result.replace_error(InvalidContentLength)
+        }
+        _ -> Ok(Nil)
+      })
 
       insert_header(headers, field, value)
       |> parse_headers(transport:, socket:, buffer: new_buffer, headers: _)
@@ -818,3 +845,6 @@ fn split(
   pattern: BitArray,
   options: List(atom.Atom),
 ) -> List(BitArray)
+
+@external(erlang, "ewe_ffi", "validate_field_value")
+fn validate_field_value(value: BitArray) -> Result(String, Nil)
