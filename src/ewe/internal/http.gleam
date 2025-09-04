@@ -1,6 +1,3 @@
-// TODO: body streaming
-// TODO: gzip?
-
 // -----------------------------------------------------------------------------
 // IMPORTS
 // -----------------------------------------------------------------------------
@@ -121,7 +118,7 @@ type ChunkedStreamState {
 // CONSTANTS
 // -----------------------------------------------------------------------------
 
-// 1MB = 1M bytes | TODO: config?
+// 1MB = 1M bytes
 const max_reading_size = 1_000_000
 
 // -----------------------------------------------------------------------------
@@ -387,9 +384,11 @@ pub fn upgrade_websocket(
 /// Appends default headers to HTTP responses
 pub fn append_default_headers(
   resp: Response(BytesTree),
+  req: Request(Connection),
   version: HttpVersion,
 ) -> Response(BytesTree) {
   let body_size = bytes_tree.byte_size(resp.body)
+  let set_close = request.get_header(req, "connection") == Ok("close")
 
   let resp = case response.get_header(resp, "content-length") {
     Ok(_) -> resp
@@ -397,14 +396,14 @@ pub fn append_default_headers(
       response.set_header(resp, "content-length", int.to_string(body_size))
   }
 
-  case version {
-    Http10 -> response.set_header(resp, "connection", "close")
-    Http11 -> {
+  case version, set_close {
+    Http10, _ -> response.set_header(resp, "connection", "close")
+    _, True -> response.set_header(resp, "connection", "close")
+    Http11, False ->
       case response.get_header(resp, "connection") {
         Ok(_) -> resp
         Error(Nil) -> response.set_header(resp, "connection", "keep-alive")
       }
-    }
   }
 }
 

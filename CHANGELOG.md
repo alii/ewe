@@ -1,5 +1,10 @@
 # Changelog
 
+# Unreleased
+
+- Add `ewe.continue_with_selector` to continue processing WebSocket messages, including selector for custom messages.
+- Add proper conditions for `connection: close`.
+
 # v0.8.1
 
 - Quick documentation fix

@@ -39,8 +39,8 @@ pub type WebsocketMessage(user_message) {
 }
 
 // Control flow for WebSocket message handling
-pub type WebsocketNext(user_state) {
-  Continue(user_state)
+pub type WebsocketNext(user_state, user_message) {
+  Continue(user_state, Option(Selector(user_message)))
   NormalStop
   AbnormalStop(reason: String)
 }
@@ -82,7 +82,7 @@ type OnInit(user_state, user_message) =
 // Function called to handle incoming WebSocket messages
 type Handler(user_state, user_message) =
   fn(WebsocketConnection, user_state, WebsocketMessage(user_message)) ->
-    WebsocketNext(user_state)
+    WebsocketNext(user_state, user_message)
 
 // Function called when the WebSocket connection is closed
 type OnClose(user_state) =
@@ -147,6 +147,12 @@ fn glisten_selector() -> Selector(InternalMessage(user_message)) {
   |> process.select_record(atom.create("tcp_closed"), 1, fn(_) { Close })
   // https://github.com/rawhat/glisten/blob/master/src/glisten/internal/handler.gleam#L137
   |> process.select_record(atom.create("ssl_closed"), 1, fn(_) { Close })
+}
+
+fn user_selector(
+  selector: Option(Selector(user_message)),
+) -> Option(Selector(InternalMessage(user_message))) {
+  option.map(selector, fn(selector) { process.map_selector(selector, User) })
 }
 
 // -----------------------------------------------------------------------------
@@ -260,12 +266,24 @@ fn handle_valid_packet(
   let next =
     // second and third arguments are for accumulation
     websocket.aggregate_frames(frames, None, [])
-    |> result.map(loop_by_frames(_, conn, handler, Continue(state.user_state)))
+    |> result.map(loop_by_frames(
+      _,
+      conn,
+      handler,
+      Continue(state.user_state, None),
+    ))
 
   case next {
-    Ok(Continue(user_state)) -> {
+    Ok(Continue(user_state, selector)) -> {
       set_socket_active_once(conn.transport, conn.socket)
-      actor.continue(WebsocketState(..state, user_state:, buffer: rest))
+
+      let next =
+        actor.continue(WebsocketState(..state, user_state:, buffer: rest))
+
+      case selector {
+        Some(selector) -> actor.with_selector(next, selector)
+        None -> next
+      }
     }
     Ok(NormalStop) -> handle_close(on_close, state, conn, None)
     Ok(AbnormalStop(reason)) ->
@@ -280,8 +298,8 @@ fn loop_by_frames(
   frames: List(Frame),
   conn: WebsocketConnection,
   handler: Handler(user_state, user_message),
-  next: WebsocketNext(user_state),
-) -> WebsocketNext(user_state) {
+  next: WebsocketNext(user_state, InternalMessage(user_message)),
+) -> WebsocketNext(user_state, InternalMessage(user_message)) {
   case frames, next {
     // Early termination cases
     _, NormalStop -> NormalStop
@@ -291,7 +309,7 @@ fn loop_by_frames(
     [], next -> next
 
     // Control frames
-    [websocket.Control(PingFrame(payload))], Continue(user_state) -> {
+    [websocket.Control(PingFrame(payload))], Continue(user_state, _) -> {
       let sent =
         transport.send(
           conn.transport,
@@ -300,11 +318,11 @@ fn loop_by_frames(
         )
 
       case sent {
-        Ok(Nil) -> Continue(user_state)
+        Ok(Nil) -> Continue(user_state, None)
         Error(_) -> AbnormalStop(failed_pong)
       }
     }
-    [websocket.Control(CloseFrame(reason))], Continue(_) -> {
+    [websocket.Control(CloseFrame(reason))], Continue(_, _) -> {
       let _ =
         transport.send(
           conn.transport,
@@ -316,15 +334,28 @@ fn loop_by_frames(
     }
 
     // Data frames
-    [frame, ..rest], Continue(user_state) -> {
-      case
+    [frame, ..rest], Continue(user_state, selector) -> {
+      let call =
         exception.rescue(fn() {
           handler(conn, user_state, WebsocketFrame(frame))
         })
-      {
-        Ok(Continue(user_state)) ->
-          loop_by_frames(rest, conn, handler, Continue(user_state))
-        Ok(stop) -> stop
+
+      case call {
+        Ok(Continue(user_state, new_selector)) -> {
+          let next_selector =
+            user_selector(new_selector)
+            |> option.or(selector)
+            |> option.map(process.merge_selector(glisten_selector(), _))
+
+          loop_by_frames(
+            rest,
+            conn,
+            handler,
+            Continue(user_state, next_selector),
+          )
+        }
+        Ok(NormalStop) -> NormalStop
+        Ok(AbnormalStop(reason)) -> AbnormalStop(reason)
         Error(_) -> AbnormalStop(crashed)
       }
     }
@@ -345,8 +376,19 @@ fn handle_user_message(
     })
 
   case call {
-    Ok(Continue(new_user_state)) ->
-      actor.continue(WebsocketState(..state, user_state: new_user_state))
+    Ok(Continue(new_user_state, new_selector)) -> {
+      let next_selector =
+        user_selector(new_selector)
+        |> option.map(process.merge_selector(glisten_selector(), _))
+
+      let next =
+        actor.continue(WebsocketState(..state, user_state: new_user_state))
+
+      case next_selector {
+        Some(selector) -> actor.with_selector(next, selector)
+        None -> next
+      }
+    }
     Ok(NormalStop) -> handle_close(on_close, state, conn, None)
     Ok(AbnormalStop(reason)) ->
       handle_close(on_close, state, conn, Some(reason))

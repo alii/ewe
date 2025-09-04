@@ -73,7 +73,9 @@ fn call_handler(
 ) -> Next {
   let resp =
     exception.rescue(fn() { handler(req) })
-    |> result.map_error(fn(_e) { on_crash })
+    |> result.map_error(fn(_e) {
+      on_crash |> response.set_header("connection", "close")
+    })
     |> result.unwrap_both()
 
   case resp {
@@ -108,7 +110,7 @@ fn handle_resp_body(
 
   let sent =
     response.set_body(resp, bytes)
-    |> http_.append_default_headers(http_version)
+    |> http_.append_default_headers(req, http_version)
     |> encoder.encode_response()
     |> transport.send(req.body.transport, req.body.socket, _)
 

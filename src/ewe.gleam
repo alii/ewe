@@ -53,6 +53,7 @@
 //// - [enable_ipv6](#enable_ipv6)
 //// - [enable_tls](#enable_tls)
 //// - [set_information_name](#set_information_name)
+//// - [quiet](#quiet)
 //// - [on_start](#on_start)
 //// - [on_crash](#on_crash)
 //// #### Server
@@ -73,6 +74,7 @@
 //// - [send_binary_frame](#send_binary_frame)
 //// - [send_text_frame](#send_text_frame)
 //// - [continue](#continue)
+//// - [continue_with_selector](#continue_with_selector)
 //// - [stop](#stop)
 //// - [stop_abnormal](#stop_abnormal)
 //// #### Experimental
@@ -596,38 +598,49 @@ pub type WebsocketConnection =
 /// Represents instruction on how WebSocket connection should proceed.
 /// 
 /// - continue processing the WebSocket connection.
+/// - continue processing the WebSocket connection with selector for custom messages.
 /// - stop the WebSocket connection.
 /// - stop the WebSocket connection with abnormal reason.
 /// 
-pub opaque type Next(user_state) {
-  Continue(user_state)
+pub opaque type Next(user_state, user_message) {
+  Continue(user_state, Option(Selector(user_message)))
   NormalStop
   AbnormalStop(reason: String)
 }
 
 /// Instructs WebSocket connection to continue processing.
 /// 
-pub fn continue(user_state: user_state) -> Next(user_state) {
-  Continue(user_state)
+pub fn continue(user_state: user_state) -> Next(user_state, user_message) {
+  Continue(user_state, None)
+}
+
+/// Instructs WebSocket connection to continue processing, including selector
+/// for custom messages.
+/// 
+pub fn continue_with_selector(
+  user_state: user_state,
+  selector: Selector(user_message),
+) -> Next(user_state, user_message) {
+  Continue(user_state, Some(selector))
 }
 
 /// Instructs WebSocket connection to stop.
 /// 
-pub fn stop() -> Next(user_state) {
+pub fn stop() -> Next(user_state, user_message) {
   NormalStop
 }
 
 /// Instructs WebSocket connection to stop with abnormal reason.
 /// 
-pub fn stop_abnormal(reason: String) -> Next(user_state) {
+pub fn stop_abnormal(reason: String) -> Next(user_state, user_message) {
   AbnormalStop(reason)
 }
 
 fn to_internal_next(
-  next: Next(user_state),
-) -> websocket_.WebsocketNext(user_state) {
+  next: Next(user_state, user_message),
+) -> websocket_.WebsocketNext(user_state, user_message) {
   case next {
-    Continue(user_state) -> websocket_.Continue(user_state)
+    Continue(user_state, selector) -> websocket_.Continue(user_state, selector)
     NormalStop -> websocket_.NormalStop
     AbnormalStop(reason) -> websocket_.AbnormalStop(reason)
   }
@@ -667,7 +680,7 @@ pub fn upgrade_websocket(
     user_state,
     WebsocketMessage(user_message),
   ) ->
-    Next(user_state),
+    Next(user_state, user_message),
   on_close on_close: fn(WebsocketConnection, user_state) -> Nil,
 ) -> Response(ResponseBody) {
   let handler = fn(conn, state, msg) {
