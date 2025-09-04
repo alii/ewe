@@ -1,12 +1,12 @@
 # Changelog
 
-# Unreleased
+# v0.9.0
 
 - Add `ewe.continue_with_selector` to continue processing WebSocket messages, including selector for custom messages.
 - Add proper conditions for `connection: close`.
 - Expand request's host header parsing.
-- Response with proper status code is being sent on http parser failure before closing connection.
-- HTTP parser now handles host header duplication, invalid format of content-length and header's invalid control characters.
+- Send response with proper status code on HTTP parser failure before closing connection.
+- HTTP parser now handles host header duplication, invalid content-length format, and headers with invalid control characters.
 
 # v0.8.1
 

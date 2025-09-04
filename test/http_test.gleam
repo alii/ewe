@@ -23,8 +23,6 @@ pub fn basic_test() {
 
   let assert Ok(resp) = httpc.send(req)
 
-  echo resp
-
   assert resp.status == 200
   assert resp.body == "hi"
   assert response.get_header(resp, "content-type")
