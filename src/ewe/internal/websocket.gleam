@@ -1,11 +1,13 @@
 // -----------------------------------------------------------------------------
 // IMPORTS
 // -----------------------------------------------------------------------------
+import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
 import gleam/dynamic/decode
 import gleam/erlang/atom
 import gleam/erlang/process.{type Selector, type Subject}
 import gleam/function
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
@@ -55,6 +57,7 @@ type WebsocketState(user_state) {
     user_state: user_state,
     permessage_deflate: Option(compression.Compression),
     buffer: BitArray,
+    awaiting_frames: List(websocket.ParsedFrame),
   )
 }
 
@@ -195,7 +198,12 @@ pub fn start(
       |> process.merge_selector(glisten_selector())
 
     let ws_state =
-      WebsocketState(user_state:, permessage_deflate: deflate, buffer: <<>>)
+      WebsocketState(
+        user_state:,
+        permessage_deflate: deflate,
+        buffer: <<>>,
+        awaiting_frames: [],
+      )
 
     actor.initialised(ws_state)
     |> actor.selecting(selector)
@@ -256,40 +264,126 @@ fn handle_valid_packet(
 ) -> ActorNext(user_state, user_message) {
   let buffer = <<state.buffer:bits, data:bits>>
 
-  let #(frames, rest) =
-    websocket.decode_many_frames(
+  let decoded =
+    websocket.decode_many_frames_result(
       buffer,
       get_inflate(state.permessage_deflate),
       [],
     )
 
-  let next =
-    // second and third arguments are for accumulation
-    websocket.aggregate_frames(frames, None, [])
-    |> result.map(loop_by_frames(
-      _,
-      conn,
-      handler,
-      Continue(state.user_state, None),
-    ))
-
-  case next {
-    Ok(Continue(user_state, selector)) -> {
+  case decoded {
+    Ok(#(frames, rest)) ->
+      handle_frames_processing(state, conn, frames, rest, handler, on_close)
+    Error(websocket.NeedMoreDataAccumulated(parsed, rest)) -> {
       set_socket_active_once(conn.transport, conn.socket)
 
-      let next =
-        actor.continue(WebsocketState(..state, user_state:, buffer: rest))
+      actor.continue(
+        WebsocketState(
+          ..state,
+          buffer: rest,
+          // NOTE: idk if its correct
+          awaiting_frames: list.append(state.awaiting_frames, parsed),
+        ),
+      )
+    }
+    Error(websocket.InvalidFrameAccumulated(_parsed)) -> {
+      handle_close(on_close, state, conn, Some(malformed))
+    }
+  }
+}
 
-      case selector {
-        Some(selector) -> actor.with_selector(next, selector)
-        None -> next
+fn handle_frames_processing(
+  state: WebsocketState(user_state),
+  conn: WebsocketConnection,
+  frames: List(websocket.ParsedFrame),
+  rest: BitArray,
+  handler: Handler(user_state, user_message),
+  on_close: OnClose(user_state),
+) {
+  let frames = list.append(state.awaiting_frames, frames)
+
+  let #(data_frames, control_frames) = separate_frames(frames, [], [])
+
+  // echo #(data_frames, control_frames)
+
+  let control_result = case control_frames {
+    [] -> Continue(state.user_state, None)
+    _ ->
+      loop_by_frames(
+        control_frames,
+        conn,
+        handler,
+        Continue(state.user_state, None),
+      )
+  }
+
+  case control_result {
+    NormalStop -> handle_close(on_close, state, conn, None)
+    AbnormalStop(reason) -> handle_close(on_close, state, conn, Some(reason))
+    Continue(_, _) -> {
+      let aggregated = websocket.aggregate_frames(data_frames, None, [])
+
+      case aggregated {
+        Ok([]) -> {
+          set_socket_active_once(conn.transport, conn.socket)
+
+          actor.continue(
+            WebsocketState(..state, buffer: rest, awaiting_frames: data_frames),
+          )
+        }
+        Ok(data_frames) -> {
+          let next =
+            loop_by_frames(
+              data_frames,
+              conn,
+              handler,
+              Continue(state.user_state, None),
+            )
+
+          case next {
+            Continue(user_state, selector) -> {
+              set_socket_active_once(conn.transport, conn.socket)
+
+              let next =
+                actor.continue(
+                  WebsocketState(
+                    ..state,
+                    user_state:,
+                    buffer: rest,
+                    awaiting_frames: [],
+                  ),
+                )
+
+              case selector {
+                Some(selector) -> actor.with_selector(next, selector)
+                None -> next
+              }
+            }
+            NormalStop -> handle_close(on_close, state, conn, None)
+            AbnormalStop(reason) ->
+              handle_close(on_close, state, conn, Some(reason))
+          }
+        }
+        Error(Nil) -> handle_close(on_close, state, conn, Some(malformed))
       }
     }
-    Ok(NormalStop) -> handle_close(on_close, state, conn, None)
-    Ok(AbnormalStop(reason)) ->
-      handle_close(on_close, state, conn, Some(reason))
+  }
+}
 
-    Error(Nil) -> handle_close(on_close, state, conn, Some(malformed))
+fn separate_frames(
+  frames: List(websocket.ParsedFrame),
+  data_frames: List(websocket.ParsedFrame),
+  control_frames: List(websocket.Frame),
+) -> #(List(websocket.ParsedFrame), List(websocket.Frame)) {
+  case frames {
+    [] -> #(list.reverse(data_frames), list.reverse(control_frames))
+    [websocket.Complete(websocket.Control(control_frame)), ..rest] ->
+      separate_frames(rest, data_frames, [
+        websocket.Control(control_frame),
+        ..control_frames
+      ])
+    [data_frame, ..rest] ->
+      separate_frames(rest, [data_frame, ..data_frames], control_frames)
   }
 }
 
@@ -309,20 +403,29 @@ fn loop_by_frames(
     [], next -> next
 
     // Control frames
-    [websocket.Control(PingFrame(payload))], Continue(user_state, _) -> {
-      let sent =
-        transport.send(
-          conn.transport,
-          conn.socket,
-          websocket.encode_pong_frame(payload, None),
-        )
+    [websocket.Control(PingFrame(payload)), ..rest], Continue(user_state, _) -> {
+      case bit_array.byte_size(payload) {
+        size if size > 125 ->
+          AbnormalStop(
+            "control frames are only allowed to have payload up to and including 125 octets",
+          )
+        _ -> {
+          let sent =
+            transport.send(
+              conn.transport,
+              conn.socket,
+              websocket.encode_pong_frame(payload, None),
+            )
 
-      case sent {
-        Ok(Nil) -> Continue(user_state, None)
-        Error(_) -> AbnormalStop(failed_pong)
+          case sent {
+            Ok(Nil) ->
+              loop_by_frames(rest, conn, handler, Continue(user_state, None))
+            Error(_) -> AbnormalStop(failed_pong)
+          }
+        }
       }
     }
-    [websocket.Control(CloseFrame(reason))], Continue(_, _) -> {
+    [websocket.Control(CloseFrame(reason)), ..], Continue(_, _) -> {
       let _ =
         transport.send(
           conn.transport,
@@ -331,6 +434,11 @@ fn loop_by_frames(
         )
 
       NormalStop
+    }
+
+    // NOTE: unsure if its should be here
+    [websocket.Continuation(_, _), ..], Continue(_, _) -> {
+      AbnormalStop("Unexpected continuation frame")
     }
 
     // Data frames

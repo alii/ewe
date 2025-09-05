@@ -592,6 +592,13 @@ fn consumer_adapter(
 // WEBSOCKET
 // -----------------------------------------------------------------------------
 
+// TODO: pass all autobahn tests
+// tests failing because of gramps:
+// 3.*
+// 4.*
+// 5.1, 5.2
+// 12.1.11
+
 pub type WebsocketConnection =
   websocket_.WebsocketConnection
 

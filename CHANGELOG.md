@@ -1,5 +1,13 @@
 # Changelog
 
+# Unreleased
+
+- WebSocket connection fails immediately if control frames have payload up to and including 125 octets.
+- Fix control frames match to extract rest frames in a list, enabling recursive itteration for other frames in memory.
+- Incomplete frames are being stored in WebSocket state until completed.
+- Unexpected continuation frame cause abnormal stop.
+- Handle control frames that are interleaved with fragment data frames
+
 # v0.9.0
 
 - Add `ewe.continue_with_selector` to continue processing WebSocket messages, including selector for custom messages.

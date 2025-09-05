@@ -341,6 +341,8 @@ pub fn upgrade_websocket(
 
   use _ <- try(case request.get_header(req, "upgrade") {
     Ok("websocket") -> Ok(Nil)
+    // TODO: figure this out
+    Ok("WebSocket") -> Ok(Nil)
     Ok(_) -> Error(InvalidUpgradeHeader)
     Error(_) -> Error(MissingUpgradeHeader)
   })
