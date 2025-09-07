@@ -323,7 +323,6 @@ fn handle_frames_processing(
     NormalStop -> handle_close(on_close, state, conn, None)
     AbnormalStop(reason) -> handle_close(on_close, state, conn, Some(reason))
     Continue(_, _) -> {
-      echo data_frames
       let aggregated =
         websocket.aggregate_frames(
           data_frames,
