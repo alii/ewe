@@ -1,11 +1,7 @@
-tests:
+autobahn_test:
 	docker run -it --rm \
-  -v "${PWD}/config:/config" \
-  -v "${PWD}/reports:/reports" \
+  -v "${PWD}/autobahn.json:/autobahn.json" \
+  -v "${PWD}/autobahn:/reports" \
   --network host \
   crossbario/autobahn-testsuite \
-  wstest -m fuzzingclient -s /config/config.json
-  kill $$(lsof -t -i:8080)
-
-gl:
-	gleam run -m autobahn
+  wstest -m fuzzingclient -s /autobahn.json

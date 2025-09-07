@@ -5,8 +5,9 @@
 - WebSocket connection fails immediately if control frames have payload up to and including 125 octets.
 - Fix control frames match to extract rest frames in a list, enabling recursive itteration for other frames in memory.
 - Incomplete frames are being stored in WebSocket state until completed.
-- Unexpected continuation frame cause abnormal stop.
-- Handle control frames that are interleaved with fragment data frames
+- Unexpected continuation frame causes abnormal stop.
+- Handle control frames that are interleaved with fragment data frames.
+- Replace gramps package with unreleased cloned version that intoduce changes to comply with Autobahn testsuite.
 
 # v0.9.0
 

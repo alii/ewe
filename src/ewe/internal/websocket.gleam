@@ -238,6 +238,8 @@ pub fn send_frame(
   deflate: Option(compression.Context),
   data: data,
 ) -> Result(Nil, SocketReason) {
+  // use <- time_function("send_frame_total")
+
   let frame =
     exception.rescue(fn() {
       encoder(data, deflate, option.None)
@@ -262,6 +264,7 @@ fn handle_valid_packet(
   handler: Handler(user_state, user_message),
   on_close: OnClose(user_state),
 ) -> ActorNext(user_state, user_message) {
+  // use <- time_function("handle_valid_packet")
   let buffer = <<state.buffer:bits, data:bits>>
 
   let decoded =
@@ -286,7 +289,7 @@ fn handle_valid_packet(
         ),
       )
     }
-    Error(websocket.InvalidFrameAccumulated(_parsed)) -> {
+    Error(websocket.ContainsInvalidFrame) -> {
       handle_close(on_close, state, conn, Some(malformed))
     }
   }
@@ -300,6 +303,8 @@ fn handle_frames_processing(
   handler: Handler(user_state, user_message),
   on_close: OnClose(user_state),
 ) {
+  // use <- time_function("handle_frames_processing")
+
   let frames = list.append(state.awaiting_frames, frames)
 
   let #(data_frames, control_frames) = separate_frames(frames, [], [])
@@ -321,7 +326,13 @@ fn handle_frames_processing(
     NormalStop -> handle_close(on_close, state, conn, None)
     AbnormalStop(reason) -> handle_close(on_close, state, conn, Some(reason))
     Continue(_, _) -> {
-      let aggregated = websocket.aggregate_frames(data_frames, None, [])
+      let aggregated =
+        websocket.aggregate_frames(
+          data_frames,
+          None,
+          [],
+          get_inflate(state.permessage_deflate),
+        )
 
       case aggregated {
         Ok([]) -> {
@@ -394,6 +405,8 @@ fn loop_by_frames(
   handler: Handler(user_state, user_message),
   next: WebsocketNext(user_state, InternalMessage(user_message)),
 ) -> WebsocketNext(user_state, InternalMessage(user_message)) {
+  // use <- time_function("loop_by_frames")
+
   case frames, next {
     // Early termination cases
     _, NormalStop -> NormalStop
