@@ -8,6 +8,7 @@
 - Unexpected continuation frame causes abnormal stop.
 - Handle control frames that are interleaved with fragment data frames.
 - Replace gramps package with unreleased cloned version that intoduce changes to comply with Autobahn testsuite.
+- Response now includes date header.
 
 # v0.9.0
 

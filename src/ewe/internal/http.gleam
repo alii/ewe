@@ -26,6 +26,7 @@ import glisten/transport.{type Transport}
 import gramps/websocket as ws
 
 import ewe/internal/buffer.{type Buffer}
+import ewe/internal/clock
 import ewe/internal/decoder.{
   AbsPath, HttpBin, HttpEoh, HttpHeader, HttpRequest, HttphBin, More, Packet,
 }
@@ -404,6 +405,11 @@ pub fn append_default_headers(
     Ok(_) -> resp
     Error(Nil) ->
       response.set_header(resp, "content-length", int.to_string(body_size))
+  }
+
+  let resp = case response.get_header(resp, "date") {
+    Ok(_) -> resp
+    Error(Nil) -> response.set_header(resp, "date", clock.get_http_date())
   }
 
   case version, set_close {

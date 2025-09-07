@@ -21,7 +21,11 @@ pub fn basic_test() {
 
   let assert Ok(req) = request.to("http://" <> ip <> ":" <> port <> "/")
 
+  let begin = now_microseconds()
   let assert Ok(resp) = httpc.send(req)
+
+  let end = now_microseconds()
+  echo end - begin
 
   assert resp.status == 200
   assert resp.body == "hi"
@@ -93,3 +97,6 @@ pub fn chunked_body_partial_test() {
   let assert [_, body] = string.split(resp, "\r\n\r\n")
   assert body == "Hello, world!#"
 }
+
+@external(erlang, "ewe_ffi", "now_microseconds")
+fn now_microseconds() -> Int
