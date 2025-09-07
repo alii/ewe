@@ -3,7 +3,7 @@ import gleam/erlang/process
 import gleam/otp/static_supervisor as supervisor
 
 pub fn main() -> Nil {
-  // Before running Autobahn testsuite, make sure to add this line to glisten/internal/acceptor.gleam:
+  // Before running Autobahn tests, make sure to add this line to glisten/internal/acceptor.gleam:
   // Replace line 140:
   // |> supervisor.start
   // With:

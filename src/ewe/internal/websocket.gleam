@@ -264,7 +264,6 @@ fn handle_valid_packet(
   handler: Handler(user_state, user_message),
   on_close: OnClose(user_state),
 ) -> ActorNext(user_state, user_message) {
-  // use <- time_function("handle_valid_packet")
   let buffer = <<state.buffer:bits, data:bits>>
 
   let decoded =
@@ -309,8 +308,6 @@ fn handle_frames_processing(
 
   let #(data_frames, control_frames) = separate_frames(frames, [], [])
 
-  // echo #(data_frames, control_frames)
-
   let control_result = case control_frames {
     [] -> Continue(state.user_state, None)
     _ ->
@@ -326,6 +323,7 @@ fn handle_frames_processing(
     NormalStop -> handle_close(on_close, state, conn, None)
     AbnormalStop(reason) -> handle_close(on_close, state, conn, Some(reason))
     Continue(_, _) -> {
+      echo data_frames
       let aggregated =
         websocket.aggregate_frames(
           data_frames,
@@ -405,8 +403,6 @@ fn loop_by_frames(
   handler: Handler(user_state, user_message),
   next: WebsocketNext(user_state, InternalMessage(user_message)),
 ) -> WebsocketNext(user_state, InternalMessage(user_message)) {
-  // use <- time_function("loop_by_frames")
-
   case frames, next {
     // Early termination cases
     _, NormalStop -> NormalStop
@@ -453,7 +449,6 @@ fn loop_by_frames(
     [websocket.Continuation(_, _), ..], Continue(_, _) -> {
       AbnormalStop("Unexpected continuation frame")
     }
-
     // Data frames
     [frame, ..rest], Continue(user_state, selector) -> {
       let call =

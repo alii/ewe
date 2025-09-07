@@ -431,7 +431,7 @@ fn read_from_socket(
   let read_size = int.min(buffer.remaining, max_reading_size)
 
   use data <- try(
-    transport.receive_timeout(transport, socket, read_size, 10_000)
+    transport.receive_timeout(transport, socket, read_size, 5000)
     |> replace_error(on_error),
   )
 
