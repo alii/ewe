@@ -59,9 +59,14 @@ pub fn unauthorized() -> Response(ResponseBody) {
   |> json_body(ErrorMessage("Unauthorized"))
 }
 
-pub fn method_not_allowed(method: http.Method) -> Response(ResponseBody) {
+pub fn method_not_allowed(method: List(http.Method)) -> Response(ResponseBody) {
+  let method =
+    list.map(method, http.method_to_string)
+    |> list.sort(string.compare)
+    |> string.join(", ")
+
   response.new(405)
-  |> response.set_header("allow", http.method_to_string(method))
+  |> response.set_header("allow", method)
   |> json_body(ErrorMessage("Method not allowed"))
 }
 
@@ -90,7 +95,7 @@ pub fn require_method(
 ) -> Response(ResponseBody) {
   case req.method == method {
     True -> next()
-    False -> method_not_allowed(method)
+    False -> method_not_allowed([method])
   }
 }
 
@@ -122,4 +127,8 @@ pub fn require_json(
     Ok(value) -> Ok(next(value))
     Error(_) -> Error(invalid_body())
   }
+}
+
+pub fn unexpected_message(fn_name: String) -> String {
+  "unexpected return from" <> fn_name
 }

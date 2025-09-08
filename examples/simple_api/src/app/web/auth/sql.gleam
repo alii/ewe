@@ -45,27 +45,6 @@ returning id, username;"
   |> pog.execute(db)
 }
 
-/// Runs the `delete_user_by_username` query
-/// defined in `./src/app/web/auth/sql/delete_user_by_username.sql`.
-///
-/// > 🐿️ This function was generated automatically using v4.4.1 of
-/// > the [squirrel package](https://github.com/giacomocavalieri/squirrel).
-///
-pub fn delete_user_by_username(
-  db: pog.Connection,
-  arg_1: String,
-) -> Result(pog.Returned(Nil), pog.QueryError) {
-  let decoder = decode.map(decode.dynamic, fn(_) { Nil })
-
-  "delete
-from users
-where username = $1;"
-  |> pog.query
-  |> pog.parameter(pog.text(arg_1))
-  |> pog.returning(decoder)
-  |> pog.execute(db)
-}
-
 /// A row you get from running the `find_user_by_id` query
 /// defined in `./src/app/web/auth/sql/find_user_by_id.sql`.
 ///

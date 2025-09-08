@@ -4,6 +4,7 @@ import gleam/http/response.{type Response}
 
 import app/web.{type Context}
 import app/web/auth
+import app/web/task
 
 pub fn handle_request(
   req: Request(Connection),
@@ -15,8 +16,11 @@ pub fn handle_request(
     ["auth", "logout"] -> auth.logout(req)
     ["session"] -> auth.session(req, ctx)
 
-    // TODO: add tasks routes
-    ["tasks"] -> todo
-    _ -> ewe.empty(response.new(404))
+    ["tasks"] -> task.all(req, ctx)
+    ["tasks", id] -> task.one(req, ctx, id)
+
+    _ ->
+      web.ErrorMessage("Unknown endpoint")
+      |> web.json_body(response.new(404), _)
   }
 }

@@ -13,17 +13,13 @@ import gleam/result
 import gleam/time/duration
 import pog
 
-import app/web.{type Context}
+import app/web.{type Context, unexpected_message}
 import app/web/auth/sql
 
 fn credentials_decoder() -> decode.Decoder(#(String, String)) {
   use username <- decode.field("username", decode.string)
   use password <- decode.field("password", decode.string)
   decode.success(#(username, password))
-}
-
-fn unexpected_message(fn_name: String) -> String {
-  "unexpected return from" <> fn_name
 }
 
 pub fn register(
