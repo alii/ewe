@@ -10,7 +10,7 @@ ewe [/juː/] - fluffy package for building web servers. Inspired by [mist](https
 ## Installation
 
 ```sh
-gleam add ewe@0.9.0 gleam_http gleam_erlang gleam_json
+gleam add ewe@0.9.0 gleam_erlang gleam_otp gleam_http gleam_json
 ```
 
 ## Usage
@@ -20,8 +20,8 @@ gleam add ewe@0.9.0 gleam_http gleam_erlang gleam_json
 ```gleam
 import gleam/bit_array
 import gleam/erlang/process.{type Subject}
-import gleam/http/request.{type Request}
-import gleam/http/response.{type Response}
+import gleam/http/request
+import gleam/http/response
 import gleam/int
 import gleam/io
 import gleam/json
@@ -30,7 +30,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 
-import ewe
+import ewe.{type Request, type Response}
 
 const internal_error = "Something went wrong, try again later"
 
@@ -38,7 +38,7 @@ const not_found_error = "Not found"
 
 const invalid_request_error = "Invalid request"
 
-fn failed_response(status: Int, error: String) -> Response(ewe.ResponseBody) {
+fn failed_response(status: Int, error: String) -> Response {
   json.object([#("error", json.string(error))])
   |> json.to_string_tree()
   |> ewe.json(response.new(status), _)
@@ -58,14 +58,9 @@ pub fn main() {
   process.sleep_forever()
 }
 
-fn handler(
-  req: Request(ewe.Connection),
-  registry: Subject(ProcessRegistryMessage),
-) -> Response(ewe.ResponseBody) {
+fn handler(req: Request, registry: Subject(ProcessRegistryMessage)) -> Response {
   case request.path_segments(req) {
-    ["hello", name] ->
-      response.new(200)
-      |> ewe.text("Hello, " <> name <> "!")
+    ["hello", name] -> response.new(200) |> ewe.text("Hello, " <> name <> "!")
     ["echo"] -> handle_echo(req, None)
     ["stream", sized] -> handle_echo(req, Some(sized))
     ["ws"] ->
@@ -105,10 +100,7 @@ fn consume_body(consume: ewe.Consumer, size: Int, acc: BitArray) -> BitArray {
   }
 }
 
-fn handle_echo(
-  req: Request(ewe.Connection),
-  stream: Option(String),
-) -> Response(ewe.ResponseBody) {
+fn handle_echo(req: Request, stream: Option(String)) -> Response {
   let content_type =
     request.get_header(req, "content-type")
     |> result.unwrap("text/plain")
@@ -146,7 +138,7 @@ fn handle_websocket(
   conn: ewe.WebsocketConnection,
   state: Nil,
   msg: ewe.WebsocketMessage(Broadcast),
-) -> ewe.Next(Nil) {
+) -> ewe.Next(Nil, Broadcast) {
   case msg {
     ewe.Text("Ping") -> {
       let _ = ewe.send_text_frame(conn, "Pong")
