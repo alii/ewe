@@ -90,8 +90,8 @@ import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
 import gleam/erlang/process.{type Selector}
 import gleam/http
-import gleam/http/request.{type Request}
-import gleam/http/response.{type Response}
+import gleam/http/request.{type Request as HttpRequest}
+import gleam/http/response.{type Response as HttpResponse}
 import gleam/int
 import gleam/io
 import gleam/option.{type Option, None, Some}
@@ -223,9 +223,11 @@ pub opaque type ResponseBody {
   Empty
 }
 
-fn transform_response_body(
-  resp: Response(ResponseBody),
-) -> Response(http_.ResponseBody) {
+/// A convenient alias for a Http response with a `ResponseBody` as the body.
+pub type Response =
+  HttpResponse(ResponseBody)
+
+fn transform_response_body(resp: Response) -> HttpResponse(http_.ResponseBody) {
   response.set_body(resp, case resp.body {
     TextData(text) -> http_.TextData(text)
     BytesData(bytes) -> http_.BytesData(bytes)
@@ -239,7 +241,7 @@ fn transform_response_body(
 /// Sets response body from string, sets `content-type` to
 /// `text/plain; charset=utf-8` and `content-length` headers.
 /// 
-pub fn text(response: Response(a), text: String) -> Response(ResponseBody) {
+pub fn text(response: HttpResponse(a), text: String) -> Response {
   response.set_body(response, TextData(text))
   |> response.set_header("content-type", "text/plain; charset=utf-8")
   |> response.set_header(
@@ -251,7 +253,7 @@ pub fn text(response: Response(a), text: String) -> Response(ResponseBody) {
 /// Sets response body from bytes, sets `content-length` header. Doesn't set
 /// `content-type` header.
 /// 
-pub fn bytes(response: Response(a), bytes: BytesTree) -> Response(ResponseBody) {
+pub fn bytes(response: HttpResponse(a), bytes: BytesTree) -> Response {
   response.set_body(response, BytesData(bytes))
   |> response.set_header(
     "content-length",
@@ -262,7 +264,7 @@ pub fn bytes(response: Response(a), bytes: BytesTree) -> Response(ResponseBody) 
 /// Sets response body from bits, sets `content-length` header. Doesn't set
 /// `content-type` header.
 /// 
-pub fn bits(response: Response(a), bits: BitArray) -> Response(ResponseBody) {
+pub fn bits(response: HttpResponse(a), bits: BitArray) -> Response {
   response.set_body(response, BitsData(bits))
   |> response.set_header(
     "content-length",
@@ -274,9 +276,9 @@ pub fn bits(response: Response(a), bits: BitArray) -> Response(ResponseBody) {
 /// set `content-type` header.
 /// 
 pub fn string_tree(
-  response: Response(a),
+  response: HttpResponse(a),
   string_tree: StringTree,
-) -> Response(ResponseBody) {
+) -> Response {
   response.set_body(response, StringTreeData(string_tree))
   |> response.set_header(
     "content-length",
@@ -286,7 +288,7 @@ pub fn string_tree(
 
 /// Sets response body to empty, sets `content-length` header to `0`.
 /// 
-pub fn empty(response: Response(a)) -> Response(ResponseBody) {
+pub fn empty(response: HttpResponse(a)) -> Response {
   response.set_body(response, Empty)
   |> response.set_header("content-length", "0")
 }
@@ -295,10 +297,7 @@ pub fn empty(response: Response(a)) -> Response(ResponseBody) {
 /// using `json.to_string_tree`), sets `content-type` to `application/json;
 /// charset=utf-8` and `content-length` headers.
 /// 
-pub fn json(
-  response: Response(a),
-  json json: StringTree,
-) -> Response(ResponseBody) {
+pub fn json(response: HttpResponse(a), json json: StringTree) -> Response {
   string_tree(response, json)
   |> response.set_header("content-type", "application/json; charset=utf-8")
 }
@@ -308,7 +307,7 @@ pub fn json(
 // -----------------------------------------------------------------------------
 
 type Handler =
-  fn(Request(Connection)) -> Response(ResponseBody)
+  fn(Request) -> Response
 
 type OnStart =
   fn(http.Scheme, SocketAddress) -> Nil
@@ -334,7 +333,7 @@ pub opaque type Builder {
     ipv6: Bool,
     tls: Option(#(String, String)),
     on_start: OnStart,
-    on_crash: Response(ResponseBody),
+    on_crash: Response,
     information_name: process.Name(information.Message(SocketAddress)),
   )
 }
@@ -454,7 +453,7 @@ pub fn quiet(builder: Builder) -> Builder {
 
 /// Sets a custom response that will be sent when server crashes.
 /// 
-pub fn on_crash(builder: Builder, on_crash: Response(ResponseBody)) -> Builder {
+pub fn on_crash(builder: Builder, on_crash: Response) -> Builder {
   Builder(..builder, on_crash:)
 }
 
@@ -536,6 +535,10 @@ pub type BodyError {
   InvalidBody
 }
 
+/// A convenient alias for a Http request with a `Connection` as the body.
+pub type Request =
+  HttpRequest(Connection)
+
 /// Reads body from a request. If request body is malformed, `InvalidBody`
 /// error is returned. On success, returns a request with body converted to
 /// `BitArray`.
@@ -544,9 +547,9 @@ pub type BodyError {
 /// - Ensures that `content-length` is in `size_limit` scope.
 /// 
 pub fn read_body(
-  req: Request(Connection),
+  req: Request,
   bytes_limit bytes_limit: Int,
-) -> Result(Request(BitArray), BodyError) {
+) -> Result(HttpRequest(BitArray), BodyError) {
   case http_.read_body(req, bytes_limit) {
     Ok(req) -> Ok(req)
     Error(http_.BodyTooLarge) -> Error(BodyTooLarge)
@@ -566,7 +569,7 @@ pub type Stream {
 
 /// Streams the request body.
 /// 
-pub fn stream_body(req: Request(Connection)) -> Result(Consumer, BodyError) {
+pub fn stream_body(req: Request) -> Result(Consumer, BodyError) {
   case http_.stream_body(req) {
     Ok(consumer) -> Ok(consumer_adapter(consumer))
     Error(_) -> Error(InvalidBody)
@@ -664,6 +667,7 @@ fn transform_websocket_message(
   message: websocket_.WebsocketMessage(user_message),
 ) -> Result(WebsocketMessage(user_message), Nil) {
   case message {
+    // TODO: https://github.com/rawhat/gramps/pull/7
     websocket_.WebsocketFrame(ws.Data(ws.TextFrame(text))) ->
       bit_array.to_string(text)
       |> result.map(Text)
@@ -679,7 +683,7 @@ fn transform_websocket_message(
 /// instruction on how WebSocket connection should proceed.
 ///  
 pub fn upgrade_websocket(
-  req: Request(Connection),
+  req: Request,
   on_init on_init: fn(WebsocketConnection, Selector(user_message)) ->
     #(user_state, Selector(user_message)),
   handler handler: fn(
@@ -689,7 +693,7 @@ pub fn upgrade_websocket(
   ) ->
     Next(user_state, user_message),
   on_close on_close: fn(WebsocketConnection, user_state) -> Nil,
-) -> Response(ResponseBody) {
+) -> Response {
   let handler = fn(conn, state, msg) {
     transform_websocket_message(msg)
     |> result.map(handler(conn, state, _))
@@ -768,8 +772,8 @@ pub fn send_text_frame(
 /// 
 /// ```gleam
 /// pub fn handle_echo(
-///   req: Request(ewe.Connection),
-/// ) -> Response(bytes_tree.BytesTree) {
+///   req: Request,
+/// ) -> Response {
 ///   let content_type =
 ///     request.get_header(req, "content-type")
 ///     |> result.unwrap("text/plain")
@@ -794,8 +798,6 @@ pub fn send_text_frame(
 ///}
 /// ```
 ///
-pub fn use_expression(
-  handler: fn() -> Result(Response(ResponseBody), Response(ResponseBody)),
-) -> Response(ResponseBody) {
+pub fn use_expression(handler: fn() -> Result(Response, Response)) -> Response {
   result.unwrap_both(handler())
 }

@@ -8,6 +8,7 @@
 - Ensure unexpected continuation frames correctly cause an abnormal stop.
 - Add handling for control frames interleaved with fragmented data frames.
 - Add `date` header to responses.
+- Add `Request` and `Response` aliases.
 
 # v0.9.0
 
