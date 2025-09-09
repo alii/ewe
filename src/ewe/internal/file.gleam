@@ -1,33 +1,82 @@
-import gleam/erlang/atom
+import gleam/bytes_tree
+import gleam/dynamic
+import gleam/result
+import glisten
+import glisten/socket.{type Socket}
+import glisten/transport.{type Transport}
 
 // -----------------------------------------------------------------------------
 // TYPES
 // -----------------------------------------------------------------------------
 
-// Represents a file descriptor
+// Represents a reference to a file
 pub type IoDevice
 
 // Represents errors that can occur when opening a file
-pub type OpenError {
+pub type FileError {
   Enoent
   Eacces
   Eisdir
-  Enotdir
-  Enospc
+  Eunknown(dynamic.Dynamic)
+}
+
+pub type File {
+  File(descriptor: IoDevice, size: Int)
+}
+
+pub type SendError {
+  FileIssue(FileError)
+  SocketIssue(glisten.SocketReason)
 }
 
 // -----------------------------------------------------------------------------
 // PUBLIC API
 // -----------------------------------------------------------------------------
 
-/// Opens a file and returns a file descriptor
-pub fn open(path: String) -> Result(IoDevice, OpenError) {
-  open_file(path, [atom.create("raw"), atom.create("binary")])
+pub fn send(
+  transport: Transport,
+  socket: Socket,
+  descriptor: IoDevice,
+  size: Int,
+) -> Result(Nil, SendError) {
+  case transport {
+    transport.Tcp(..) -> {
+      send_file(descriptor, socket, 0, size, [])
+      |> result.map_error(SocketIssue)
+    }
+    transport.Ssl(..) -> {
+      pread(descriptor, 0, size)
+      |> result.map_error(FileIssue)
+      |> result.try(fn(bits) {
+        transport.send(transport, socket, bytes_tree.from_bit_array(bits))
+        |> result.map_error(SocketIssue)
+      })
+    }
+  }
 }
 
 // -----------------------------------------------------------------------------
-// FILES
+// FILE OPERATIONS
 // -----------------------------------------------------------------------------
 
-@external(erlang, "file", "open")
-fn open_file(path: String, mode: List(atom.Atom)) -> Result(IoDevice, OpenError)
+@external(erlang, "mist_ffi", "open_file")
+pub fn open(path: String) -> Result(File, FileError)
+
+@external(erlang, "mist_ffi", "close_file")
+pub fn close(file: IoDevice) -> Result(Nil, FileError)
+
+@external(erlang, "file", "sendfile")
+fn send_file(
+  descriptor descriptor: IoDevice,
+  socket socket: Socket,
+  offset offset: Int,
+  bytes bytes: Int,
+  options options: List(a),
+) -> Result(Nil, glisten.SocketReason)
+
+@external(erlang, "file", "pread")
+fn pread(
+  descriptor: IoDevice,
+  location: Int,
+  number: Int,
+) -> Result(BitArray, FileError)

@@ -88,6 +88,7 @@
 
 import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
+import gleam/dynamic
 import gleam/erlang/process.{type Selector}
 import gleam/http
 import gleam/http/request.{type Request as HttpRequest}
@@ -220,6 +221,8 @@ pub opaque type ResponseBody {
 
   WebsocketConnection(Selector(process.Down))
 
+  File(descriptor: file_.IoDevice, size: Int)
+
   Empty
 }
 
@@ -234,6 +237,7 @@ fn transform_response_body(resp: Response) -> HttpResponse(http_.ResponseBody) {
     BitsData(bits) -> http_.BitsData(bits)
     StringTreeData(string_tree) -> http_.StringTreeData(string_tree)
     WebsocketConnection(selector) -> http_.WebsocketConnection(selector)
+    File(descriptor, size) -> http_.File(descriptor, size)
     Empty -> http_.Empty
   })
 }
@@ -300,6 +304,34 @@ pub fn empty(response: HttpResponse(a)) -> Response {
 pub fn json(response: HttpResponse(a), json json: StringTree) -> Response {
   string_tree(response, json)
   |> response.set_header("content-type", "application/json; charset=utf-8")
+}
+
+pub type FileError {
+  NoEntry
+  NoAccess
+  IsDirectory
+  UnknownFileError(dynamic.Dynamic)
+}
+
+pub fn file(
+  response: HttpResponse(a),
+  path: String,
+) -> Result(Response, FileError) {
+  file_.open(path)
+  |> result.map_error(internal_to_file_error)
+  |> result.map(fn(file) {
+    response.set_body(response, File(file.descriptor, file.size))
+    |> response.set_header("content-length", int.to_string(file.size))
+  })
+}
+
+fn internal_to_file_error(error: file_.FileError) -> FileError {
+  case error {
+    file_.Enoent -> NoEntry
+    file_.Eacces -> NoAccess
+    file_.Eisdir -> IsDirectory
+    file_.Eunknown(error) -> UnknownFileError(error)
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -667,12 +699,8 @@ fn transform_websocket_message(
   message: websocket_.WebsocketMessage(user_message),
 ) -> Result(WebsocketMessage(user_message), Nil) {
   case message {
-    // TODO: https://github.com/rawhat/gramps/pull/7
-    websocket_.WebsocketFrame(ws.Data(ws.TextFrame(text))) ->
-      bit_array.to_string(text)
-      |> result.map(Text)
-    websocket_.WebsocketFrame(ws.Data(ws.BinaryFrame(binary))) ->
-      Ok(Binary(binary))
+    websocket_.WebsocketFrame(ws.Data(_frame)) ->
+      todo as "https://github.com/rawhat/gramps/pull/7"
     websocket_.UserMessage(user_message) -> Ok(User(user_message))
     _ -> Error(Nil)
   }

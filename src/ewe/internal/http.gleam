@@ -31,6 +31,7 @@ import ewe/internal/decoder.{
   AbsPath, HttpBin, HttpEoh, HttpHeader, HttpRequest, HttphBin, More, Packet,
 }
 import ewe/internal/encoder
+import ewe/internal/file
 
 // -----------------------------------------------------------------------------
 // TYPES
@@ -44,6 +45,8 @@ pub type ResponseBody {
   StringTreeData(StringTree)
 
   WebsocketConnection(Selector(process.Down))
+
+  File(descriptor: file.IoDevice, size: Int)
 
   Empty
 }
@@ -398,13 +401,14 @@ pub fn append_default_headers(
   req: Request(Connection),
   version: HttpVersion,
 ) -> Response(BytesTree) {
-  let body_size = bytes_tree.byte_size(resp.body)
   let set_close = request.get_header(req, "connection") == Ok("close")
 
   let resp = case response.get_header(resp, "content-length") {
     Ok(_) -> resp
-    Error(Nil) ->
-      response.set_header(resp, "content-length", int.to_string(body_size))
+    Error(Nil) -> {
+      let body_size = bytes_tree.byte_size(resp.body) |> int.to_string
+      response.set_header(resp, "content-length", body_size)
+    }
   }
 
   let resp = case response.get_header(resp, "date") {

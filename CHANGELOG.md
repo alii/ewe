@@ -9,6 +9,9 @@
 - Add handling for control frames interleaved with fragmented data frames.
 - Add `date` header to responses.
 - Add `Request` and `Response` aliases.
+- Add `file` function for setting file as a response body.
+- Fix server still listening on a socket after `connection: close`.
+
 
 # v0.9.0
 

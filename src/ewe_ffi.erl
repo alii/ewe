@@ -1,7 +1,12 @@
 -module(ewe_ffi).
 
 -export([decode_packet/3, rescue/1, validate_field_value/1, init_clock_storage/0,
-         set_http_date/1, lookup_http_date/0, now/0, now_microseconds/0]).
+         set_http_date/1, lookup_http_date/0, now/0, now_microseconds/0,
+         open_file/1, close_file/1]).
+
+% -----------------------------------------------------------------------------
+% HTTP
+% -----------------------------------------------------------------------------
 
 decode_packet(Type, Packet, Options) ->
   case erlang:decode_packet(Type, Packet, Options) of
@@ -17,18 +22,6 @@ decode_packet(Type, Packet, Options) ->
       {ok, {more, {some, Length}}};
     {error, Reason} ->
       {error, Reason}
-  end.
-
-rescue(Callable) ->
-  try
-    {ok, Callable()}
-  catch
-    error:Error ->
-      {error, {errored, Error}};
-    Error ->
-      {error, {thrown, Error}};
-    exit:Error ->
-      {error, {exited, Error}}
   end.
 
 validate_field_value(Value) ->
@@ -57,6 +50,10 @@ do_validate_field_value(Value) ->
       false
   end.
 
+% -----------------------------------------------------------------------------
+% CLOCK
+% -----------------------------------------------------------------------------
+
 now() ->
   Timestamp = os:system_time(microsecond),
   {Date, Time} = calendar:system_time_to_universal_time(Timestamp, microsecond),
@@ -78,4 +75,56 @@ lookup_http_date() ->
   catch
     _:badarg ->
       {error, nil}
+  end.
+
+% -----------------------------------------------------------------------------
+% FILES
+% -----------------------------------------------------------------------------
+
+open_file(Path) ->
+  case file:open(Path, [binary, raw]) of
+    {ok, IoDevice} ->
+      {ok, {file, IoDevice, filelib:file_size(Path)}};
+    {error, enoent} ->
+      {error, enoent};
+    {error, eacces} ->
+      {error, eacces};
+    {error, eisdir} ->
+      {error, eisdir};
+    {error, enotdir} ->
+      {error, enoent};
+    {error, Err} ->
+      {error, {eunknown, Err}}
+  end.
+
+close_file(File) ->
+  case file:close(File) of
+    ok ->
+      {ok, nil};
+    {error, enoent} ->
+      {error, enoent};
+    {error, eacces} ->
+      {error, eacces};
+    {error, eisdir} ->
+      {error, eisdir};
+    {error, enotdir} ->
+      {error, enoent};
+    {error, _} ->
+      {error, eunknown}
+  end.
+
+% -----------------------------------------------------------------------------
+% RESCUING
+% -----------------------------------------------------------------------------
+
+rescue(Callable) ->
+  try
+    {ok, Callable()}
+  catch
+    error:Error ->
+      {error, {errored, Error}};
+    Error ->
+      {error, {thrown, Error}};
+    exit:Error ->
+      {error, {exited, Error}}
   end.

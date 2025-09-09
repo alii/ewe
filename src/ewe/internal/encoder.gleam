@@ -20,6 +20,14 @@ pub fn encode_response(
   |> bytes_tree.append_tree(response.body)
 }
 
+pub fn setup_encoded_response(
+  response: response.Response(a),
+) -> bytes_tree.BytesTree {
+  bytes_tree.new()
+  |> bytes_tree.append(encode_status_line(response.status))
+  |> bytes_tree.append(encode_headers(response.headers))
+}
+
 // -----------------------------------------------------------------------------
 // ENCODING
 // -----------------------------------------------------------------------------

@@ -1,12 +1,14 @@
 // -----------------------------------------------------------------------------
 // IMPORTS
 // -----------------------------------------------------------------------------
+import ewe/internal/file
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response, Response}
 import gleam/option
 import gleam/result
+import glisten/socket
 
 import glisten
 import glisten/transport
@@ -15,24 +17,18 @@ import ewe/internal/buffer
 import ewe/internal/encoder
 import ewe/internal/exception
 import ewe/internal/http.{
-  type Connection, type ResponseBody, BitsData, BytesData, Empty, StringTreeData,
-  TextData, WebsocketConnection,
+  type Connection, type ResponseBody, BitsData, BytesData, Empty, File,
+  StringTreeData, TextData, WebsocketConnection,
 } as http_
 
 // -----------------------------------------------------------------------------
 // TYPES
 // -----------------------------------------------------------------------------
 
-// Represents the reason for exiting the handler loop
-type ExitReason {
-  Normal
-  Abnormal(reason: String)
-}
-
 // Control flow for the handler loop
 type Next {
   Continue
-  Stop(ExitReason)
+  Stop
 }
 
 // -----------------------------------------------------------------------------
@@ -54,8 +50,7 @@ pub fn loop(
       Ok(req) ->
         case call_handler(req, handler, on_crash) {
           Continue -> glisten.continue(state)
-          Stop(Normal) -> glisten.stop()
-          Stop(Abnormal(reason)) -> glisten.stop_abnormal(reason)
+          Stop -> glisten.stop()
         }
 
       Error(reason) -> {
@@ -97,8 +92,10 @@ fn call_handler(
   case resp {
     Response(body: WebsocketConnection(selector), ..) -> {
       let _ = process.selector_receive_forever(selector)
-      Stop(Normal)
+      Stop
     }
+    Response(body: File(descriptor, size), ..) ->
+      handle_resp_file(req, resp, descriptor, size)
     Response(body: body, ..) -> handle_resp_body(req, resp, body)
   }
 }
@@ -106,6 +103,34 @@ fn call_handler(
 // -----------------------------------------------------------------------------
 // RESPONSE HANDLING
 // -----------------------------------------------------------------------------
+
+fn handle_resp_file(
+  req: Request(Connection),
+  resp: Response(ResponseBody),
+  descriptor: file.IoDevice,
+  size: Int,
+) -> Next {
+  let assert option.Some(http_version) = req.body.http_version
+
+  let resp =
+    response.set_body(resp, bytes_tree.new())
+    |> http_.append_default_headers(req, http_version)
+
+  let sent =
+    encoder.setup_encoded_response(resp)
+    |> transport.send(req.body.transport, req.body.socket, _)
+    |> result.try(fn(_) {
+      file.send(req.body.transport, req.body.socket, descriptor, size)
+      |> result.replace_error(socket.Badarg)
+    })
+
+  let _ = file.close(descriptor)
+
+  case sent, is_connection_close(resp) {
+    Ok(Nil), False -> Continue
+    _, _ -> Stop
+  }
+}
 
 /// Handles the response body and sends it to the client
 fn handle_resp_body(
@@ -130,8 +155,15 @@ fn handle_resp_body(
     |> encoder.encode_response()
     |> transport.send(req.body.transport, req.body.socket, _)
 
-  case sent {
-    Ok(Nil) -> Continue
-    Error(_) -> Stop(Normal)
+  case sent, is_connection_close(resp) {
+    Ok(Nil), False -> Continue
+    _, _ -> Stop
+  }
+}
+
+fn is_connection_close(resp: Response(a)) -> Bool {
+  case response.get_header(resp, "connection") {
+    Ok("close") -> True
+    _ -> False
   }
 }
