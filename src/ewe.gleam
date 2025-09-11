@@ -69,6 +69,7 @@
 //// - [string_tree](#string_tree)
 //// - [empty](#empty)
 //// - [json](#json)
+//// - [file](#file)
 //// #### Websocket
 //// - [upgrade_websocket](#upgrade_websocket)
 //// - [send_binary_frame](#send_binary_frame)
@@ -212,6 +213,7 @@ pub fn get_server_info(
 /// - `ewe.string_tree`
 /// - `ewe.empty`
 /// - `ewe.json`
+/// - `ewe.file`
 /// 
 pub opaque type ResponseBody {
   TextData(String)
@@ -227,6 +229,7 @@ pub opaque type ResponseBody {
 }
 
 /// A convenient alias for a Http response with a `ResponseBody` as the body.
+/// 
 pub type Response =
   HttpResponse(ResponseBody)
 
@@ -254,8 +257,7 @@ pub fn text(response: HttpResponse(a), text: String) -> Response {
   )
 }
 
-/// Sets response body from bytes, sets `content-length` header. Doesn't set
-/// `content-type` header.
+/// Sets response body from bytes, sets `content-length` header.
 /// 
 pub fn bytes(response: HttpResponse(a), bytes: BytesTree) -> Response {
   response.set_body(response, BytesData(bytes))
@@ -265,8 +267,7 @@ pub fn bytes(response: HttpResponse(a), bytes: BytesTree) -> Response {
   )
 }
 
-/// Sets response body from bits, sets `content-length` header. Doesn't set
-/// `content-type` header.
+/// Sets response body from bits, sets `content-length` header.
 /// 
 pub fn bits(response: HttpResponse(a), bits: BitArray) -> Response {
   response.set_body(response, BitsData(bits))
@@ -276,8 +277,7 @@ pub fn bits(response: HttpResponse(a), bits: BitArray) -> Response {
   )
 }
 
-/// Sets response body from string tree, sets `content-length` header. Doesn't
-/// set `content-type` header.
+/// Sets response body from string tree, sets `content-length` header.
 /// 
 pub fn string_tree(
   response: HttpResponse(a),
@@ -306,6 +306,8 @@ pub fn json(response: HttpResponse(a), json json: StringTree) -> Response {
   |> response.set_header("content-type", "application/json; charset=utf-8")
 }
 
+/// Possible errors that can occur when setting response body from file.
+/// 
 pub type FileError {
   NoEntry
   NoAccess
@@ -313,6 +315,17 @@ pub type FileError {
   UnknownFileError(dynamic.Dynamic)
 }
 
+fn internal_to_file_error(error: file_.FileError) -> FileError {
+  case error {
+    file_.Enoent -> NoEntry
+    file_.Eacces -> NoAccess
+    file_.Eisdir -> IsDirectory
+    file_.Eunknown(error) -> UnknownFileError(error)
+  }
+}
+
+/// Sets response body from file, sets `content-length` header.
+/// 
 pub fn file(
   response: HttpResponse(a),
   path: String,
@@ -325,22 +338,15 @@ pub fn file(
   })
 }
 
-fn internal_to_file_error(error: file_.FileError) -> FileError {
-  case error {
-    file_.Enoent -> NoEntry
-    file_.Eacces -> NoAccess
-    file_.Eisdir -> IsDirectory
-    file_.Eunknown(error) -> UnknownFileError(error)
-  }
-}
-
 // -----------------------------------------------------------------------------
 // BUILDER
 // -----------------------------------------------------------------------------
 
+// A convenient alias for a handler function.
 type Handler =
   fn(Request) -> Response
 
+// A convenient alias for an `on_start` function.
 type OnStart =
   fn(http.Scheme, SocketAddress) -> Nil
 
@@ -568,6 +574,7 @@ pub type BodyError {
 }
 
 /// A convenient alias for a Http request with a `Connection` as the body.
+/// 
 pub type Request =
   HttpRequest(Connection)
 
@@ -590,10 +597,12 @@ pub fn read_body(
 }
 
 /// Alias for consumer type for reading N amount of bytes from the request body stream.
+/// 
 pub type Consumer =
   fn(Int) -> Result(Stream, BodyError)
 
 /// Used to track the progress of reading the request body stream.
+/// 
 pub type Stream {
   Consumed(data: BitArray, next: Consumer)
   Done
@@ -608,7 +617,6 @@ pub fn stream_body(req: Request) -> Result(Consumer, BodyError) {
   }
 }
 
-// Helper function to convert internal consumer to public consumer
 fn consumer_adapter(
   internal_consumer: fn(Int) -> Result(http_.Stream, http_.ParseError),
 ) -> Consumer {
@@ -627,13 +635,8 @@ fn consumer_adapter(
 // WEBSOCKET
 // -----------------------------------------------------------------------------
 
-// TODO: pass all autobahn tests
-// tests failing because of gramps:
-// 3.*
-// 4.*
-// 5.1, 5.2
-// 12.1.11
-
+/// Represents a websocket connection between a client and a server
+/// 
 pub type WebsocketConnection =
   websocket_.WebsocketConnection
 
@@ -689,6 +692,7 @@ fn to_internal_next(
 }
 
 /// Represents a WebSocket message received from the client.
+/// 
 pub type WebsocketMessage(user_message) {
   Text(String)
   Binary(BitArray)
