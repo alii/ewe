@@ -2,15 +2,19 @@
 
 # Unreleased
 
+### HTTP
+- Add `date` header to responses.
+- Add `Request` and `Response` aliases.
+- Add `file` function for setting file as a response body.
+- Fix server still listening on a socket after `connection: close`.
+- Kept alive connection closes after 10_000 milliseconds of idling. Can be adjusted in builder using `ewe.idle_timeout`.
+
+### WebSocket
 - Add WebSocket connection failures for control frames with payloads up to 125 octets.
 - Fix control frames matching to properly extract rest frames from a list of aggregated frames.
 - Store incomplete frames in WebSocket state until they are fully received.
 - Ensure unexpected continuation frames correctly cause an abnormal stop.
 - Add handling for control frames interleaved with fragmented data frames.
-- Add `date` header to responses.
-- Add `Request` and `Response` aliases.
-- Add `file` function for setting file as a response body.
-- Fix server still listening on a socket after `connection: close`.
 
 
 # v0.9.0

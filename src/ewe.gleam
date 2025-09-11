@@ -54,6 +54,7 @@
 //// - [enable_tls](#enable_tls)
 //// - [set_information_name](#set_information_name)
 //// - [quiet](#quiet)
+//// - [idle_timeout](#idle_timeout)
 //// - [on_start](#on_start)
 //// - [on_crash](#on_crash)
 //// #### Server
@@ -362,6 +363,7 @@ type OnStart =
 /// - `ewe.on_start`
 /// - `ewe.quiet`
 /// - `ewe.on_crash`
+/// - `ewe.idle_timeout`
 /// 
 pub opaque type Builder {
   Builder(
@@ -373,6 +375,7 @@ pub opaque type Builder {
     on_start: OnStart,
     on_crash: Response,
     information_name: process.Name(information.Message(SocketAddress)),
+    idle_timeout: Int,
   )
 }
 
@@ -386,6 +389,7 @@ pub opaque type Builder {
 /// - Default process name for server information retrieval
 /// - on_start: prints `Listening on <scheme>://<ip_address>:<port>`
 /// - on_crash: empty 500 response
+/// - idle_timeout: connection is closed after 10_000ms of inactivity
 /// 
 pub fn new(handler: Handler) -> Builder {
   Builder(
@@ -411,6 +415,7 @@ pub fn new(handler: Handler) -> Builder {
     },
     on_crash: response.new(500) |> response.set_body(Empty),
     information_name: process.new_name("ewe_server_info"),
+    idle_timeout: 10_000,
   )
 }
 
@@ -495,6 +500,15 @@ pub fn on_crash(builder: Builder, on_crash: Response) -> Builder {
   Builder(..builder, on_crash:)
 }
 
+/// Sets a custom idle timeout in milliseconds for connections. If provided timeout is less than 0, 10_000ms will be used instead.
+/// 
+pub fn idle_timeout(builder: Builder, idle_timeout: Int) -> Builder {
+  case idle_timeout {
+    idle_timeout if idle_timeout >= 0 -> Builder(..builder, idle_timeout:)
+    _ -> Builder(..builder, idle_timeout: 10_000)
+  }
+}
+
 // -----------------------------------------------------------------------------
 // SERVER
 // -----------------------------------------------------------------------------
@@ -513,7 +527,10 @@ pub fn start(
   let information = information.worker(builder.information_name)
 
   let glisten_supervisor =
-    glisten.new(fn(_conn) { #(Nil, None) }, handler_.loop(handler, on_crash))
+    glisten.new(
+      handler_.init,
+      handler_.loop(handler, on_crash, builder.idle_timeout),
+    )
     |> glisten.bind(builder.interface)
     |> fn(glisten_builder) {
       case builder.ipv6 {
