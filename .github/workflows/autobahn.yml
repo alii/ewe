@@ -36,7 +36,7 @@ jobs:
             wstest -m fuzzingclient -s /autobahn.json
       
       - name: Upload reports
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: autobahn-reports
           path: autobahn/
