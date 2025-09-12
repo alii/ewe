@@ -1,4 +1,4 @@
-name: test
+name: gleam tests
 
 on:
   push:
@@ -16,6 +16,12 @@ jobs:
           otp-version: "27.1.2"
           gleam-version: "1.12.0"
           rebar3-version: "3"
-      - run: gleam deps download
-      - run: gleam test
-      - run: gleam format --check src test
+
+      - name: Downloading dependencies
+        run: gleam deps download
+
+      - name: Running gleam tests
+        run: gleam test
+
+      - name: Check code formatting
+        run: gleam format --check src test
