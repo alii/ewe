@@ -8,5 +8,8 @@
   ],
   "cases": ["*"],
   "exclude-cases": [],
-  "exclude-agent-cases": {}
+  "exclude-agent-cases": {},
+  "optioms": {
+    "failByDrop": false
+  }
 }
