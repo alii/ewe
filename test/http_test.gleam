@@ -1,42 +1,37 @@
-// TODO: fill http tests
-
 import client/tcp as client
 import ewe
 import gleam/bit_array
 import gleam/bytes_tree
+import gleam/erlang/process
 import gleam/http
 import gleam/http/request
 import gleam/http/response
 import gleam/httpc
 import gleam/int
 import gleam/string
+import glisten/socket
 import glisten/tcp
 import server
 
-pub fn basic_test() {
+pub fn simple_request_test() {
   let socket_address = server.start(server.hi())
-
   let ip = ewe.ip_address_to_string(socket_address.ip)
   let port = int.to_string(socket_address.port)
 
   let assert Ok(req) = request.to("http://" <> ip <> ":" <> port <> "/")
 
-  let begin = now_microseconds()
   let assert Ok(resp) = httpc.send(req)
-
-  let end = now_microseconds()
-  echo end - begin
 
   assert resp.status == 200
   assert resp.body == "hi"
   assert response.get_header(resp, "content-type")
     == Ok("text/plain; charset=utf-8")
   assert response.get_header(resp, "content-length") == Ok("2")
+  assert response.get_header(resp, "connection") == Ok("close")
 }
 
 pub fn chunked_body_test() {
   let socket_address = server.start(server.echoer())
-
   let ip = ewe.ip_address_to_string(socket_address.ip)
   let port = int.to_string(socket_address.port)
 
@@ -98,5 +93,30 @@ pub fn chunked_body_partial_test() {
   assert body == "Hello, world!#"
 }
 
-@external(erlang, "ewe_ffi", "now_microseconds")
-fn now_microseconds() -> Int
+pub fn idle_timeout_test() {
+  let socket_address = server.start(server.echoer() |> ewe.idle_timeout(500))
+  let port = int.to_string(socket_address.port)
+
+  use socket <- client.with_socket(socket_address.port, active: False)
+
+  let req =
+    "GET /echo HTTP/1.1\r\n"
+    <> "Host: localhost:"
+    <> port
+    <> "\r\n"
+    <> "Connection: keep-alive\r\n"
+    <> "\r\n"
+
+  let assert Ok(Nil) = tcp.send(socket, bytes_tree.from_string(req))
+  let assert Ok(_) = tcp.receive(socket, 0)
+
+  process.sleep(250)
+
+  let assert Ok(Nil) = tcp.send(socket, bytes_tree.from_string(req))
+  let assert Ok(_) = tcp.receive(socket, 0)
+
+  let assert Error(socket.Timeout) = tcp.receive_timeout(socket, 0, 300)
+  let assert Error(socket.Closed) = tcp.receive_timeout(socket, 0, 250)
+
+  Nil
+}

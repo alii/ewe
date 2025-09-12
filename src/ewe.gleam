@@ -109,7 +109,8 @@ import glisten
 import glisten/socket/options as glisten_options
 import glisten/transport
 
-import gramps/websocket as ws
+// TODO: replace this once gramps changes are published
+import ewe/internal/gramps/websocket as ws
 
 import ewe/internal/file as file_
 import ewe/internal/handler as handler_
@@ -719,9 +720,17 @@ pub type WebsocketMessage(user_message) {
 fn transform_websocket_message(
   message: websocket_.WebsocketMessage(user_message),
 ) -> Result(WebsocketMessage(user_message), Nil) {
+  // NOTE: see "https://github.com/rawhat/gramps/pull/7"
   case message {
-    websocket_.WebsocketFrame(ws.Data(_frame)) ->
-      todo as "https://github.com/rawhat/gramps/pull/7"
+    websocket_.WebsocketFrame(ws.Data(frame)) -> {
+      ws.match_data_frame(
+        frame,
+        on_text: fn(payload, _) {
+          bit_array.to_string(payload) |> result.map(Text)
+        },
+        on_binary: fn(payload, _) { Ok(Binary(payload)) },
+      )
+    }
     websocket_.UserMessage(user_message) -> Ok(User(user_message))
     _ -> Error(Nil)
   }

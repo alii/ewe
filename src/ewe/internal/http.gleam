@@ -23,7 +23,8 @@ import glisten
 import glisten/socket.{type Socket}
 import glisten/transport.{type Transport}
 
-import gramps/websocket as ws
+// TODO: replace this once gramps changes are published
+import ewe/internal/gramps/websocket as ws
 
 import ewe/internal/buffer.{type Buffer}
 import ewe/internal/clock

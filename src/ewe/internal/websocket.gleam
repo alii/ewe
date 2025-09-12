@@ -16,8 +16,9 @@ import glisten/socket.{type Socket, type SocketReason}
 import glisten/socket/options.{ActiveMode, Once}
 import glisten/transport.{type Transport}
 
-import gramps/websocket.{type Frame, CloseFrame, PingFrame}
-import gramps/websocket/compression
+// TODO: replace this once gramps changes are published
+import ewe/internal/gramps/websocket.{type Frame, CloseFrame, PingFrame}
+import ewe/internal/gramps/websocket/compression
 
 import ewe/internal/exception
 
