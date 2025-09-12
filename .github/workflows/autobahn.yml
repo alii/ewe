@@ -28,7 +28,7 @@ jobs:
 
       - name: Run autobahn tests
         run: |
-          docker run -it --rm \
+          docker run --rm \
             -v "${PWD}/autobahn.json:/autobahn.json" \
             -v "${PWD}/autobahn:/reports" \
             --network host \
