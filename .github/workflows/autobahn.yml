@@ -29,7 +29,7 @@ jobs:
       - name: Run autobahn tests (expected to have no panics)
         run: |
           docker run --rm \
-            -v "${PWD}/autobahn.json:/autobahn.json" \
+            -v "${PWD}/config_prod.json:/autobahn.json" \
             -v "${PWD}/autobahn:/reports" \
             --network host \
             crossbario/autobahn-testsuite \
