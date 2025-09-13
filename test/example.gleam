@@ -1,21 +1,3 @@
-![ewe](https://raw.githubusercontent.com/vshakitskiy/ewe/mistress/public/banner.jpg)
-
-# 🐑 ewe
-
-ewe [/juː/] - fluffy package for building web servers. Inspired by [mist](https://github.com/rawhat/mist).
-
-[![Package Version](https://img.shields.io/hexpm/v/ewe)](https://hex.pm/packages/ewe)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/ewe/)
-
-## Installation
-
-```sh
-gleam add ewe@0.9.0 gleam_erlang gleam_otp gleam_http gleam_json gleam_yielder
-```
-
-## Usage
-
-```gleam
 import gleam/bit_array
 import gleam/erlang/process.{type Subject}
 import gleam/http/request
@@ -186,4 +168,3 @@ fn register(
 fn announce(registry: Subject(ProcessRegistryMessage), message: String) -> Nil {
   process.send(registry, Announce(Announcement(message)))
 }
-```

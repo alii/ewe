@@ -71,6 +71,7 @@
 //// - [empty](#empty)
 //// - [json](#json)
 //// - [file](#file)
+//// - [chunked](#chunked)
 //// #### Websocket
 //// - [upgrade_websocket](#upgrade_websocket)
 //// - [send_binary_frame](#send_binary_frame)
@@ -104,6 +105,7 @@ import gleam/otp/supervision
 import gleam/result
 import gleam/string
 import gleam/string_tree.{type StringTree}
+import gleam/yielder
 
 import glisten
 import glisten/socket/options as glisten_options
@@ -216,6 +218,7 @@ pub fn get_server_info(
 /// - `ewe.empty`
 /// - `ewe.json`
 /// - `ewe.file`
+/// - `ewe.chunked`
 /// 
 pub opaque type ResponseBody {
   TextData(String)
@@ -223,9 +226,10 @@ pub opaque type ResponseBody {
   BitsData(BitArray)
   StringTreeData(StringTree)
 
-  WebsocketConnection(Selector(process.Down))
-
+  ChunkedData(yielder.Yielder(BitArray))
   File(descriptor: file_.IoDevice, size: Int)
+
+  WebsocketConnection(Selector(process.Down))
 
   Empty
 }
@@ -241,8 +245,12 @@ fn transform_response_body(resp: Response) -> HttpResponse(http_.ResponseBody) {
     BytesData(bytes) -> http_.BytesData(bytes)
     BitsData(bits) -> http_.BitsData(bits)
     StringTreeData(string_tree) -> http_.StringTreeData(string_tree)
-    WebsocketConnection(selector) -> http_.WebsocketConnection(selector)
+
+    ChunkedData(yielder) -> http_.ChunkedData(yielder)
     File(descriptor, size) -> http_.File(descriptor, size)
+
+    WebsocketConnection(selector) -> http_.WebsocketConnection(selector)
+
     Empty -> http_.Empty
   })
 }
@@ -308,6 +316,16 @@ pub fn json(response: HttpResponse(a), json json: StringTree) -> Response {
   |> response.set_header("content-type", "application/json; charset=utf-8")
 }
 
+/// Sets response body from yielder, sets `transfer-encoding` header to `chunked`.
+/// 
+pub fn chunked(
+  response: HttpResponse(a),
+  yielder: yielder.Yielder(BitArray),
+) -> Response {
+  response.set_body(response, ChunkedData(yielder))
+  |> response.set_header("transfer-encoding", "chunked")
+}
+
 /// Possible errors that can occur when setting response body from file.
 /// 
 pub type FileError {
@@ -344,11 +362,9 @@ pub fn file(
 // BUILDER
 // -----------------------------------------------------------------------------
 
-// A convenient alias for a handler function.
 type Handler =
   fn(Request) -> Response
 
-// A convenient alias for an `on_start` function.
 type OnStart =
   fn(http.Scheme, SocketAddress) -> Nil
 
@@ -661,7 +677,8 @@ pub type WebsocketConnection =
 /// Represents instruction on how WebSocket connection should proceed.
 /// 
 /// - continue processing the WebSocket connection.
-/// - continue processing the WebSocket connection with selector for custom messages.
+/// - continue processing the WebSocket connection with selector for custom
+///   messages.
 /// - stop the WebSocket connection.
 /// - stop the WebSocket connection with abnormal reason.
 /// 

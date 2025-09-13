@@ -18,6 +18,7 @@ import gleam/set.{type Set}
 import gleam/string
 import gleam/string_tree.{type StringTree}
 import gleam/uri
+import gleam/yielder
 
 import glisten
 import glisten/socket.{type Socket}
@@ -45,9 +46,10 @@ pub type ResponseBody {
   BitsData(BitArray)
   StringTreeData(StringTree)
 
-  WebsocketConnection(Selector(process.Down))
-
+  ChunkedData(yielder.Yielder(BitArray))
   File(descriptor: file.IoDevice, size: Int)
+
+  WebsocketConnection(Selector(process.Down))
 
   Empty
 }

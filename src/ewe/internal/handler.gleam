@@ -2,23 +2,25 @@
 // IMPORTS
 // -----------------------------------------------------------------------------
 import ewe/internal/file
+import gleam/bit_array
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response, Response}
 import gleam/option.{type Option, None, Some}
 import gleam/result
-import glisten/socket
+import gleam/yielder.{type Yielder}
 
 import glisten
+import glisten/socket
 import glisten/transport
 
 import ewe/internal/buffer
 import ewe/internal/encoder
 import ewe/internal/exception
 import ewe/internal/http.{
-  type Connection, type ResponseBody, BitsData, BytesData, Empty, File,
-  StringTreeData, TextData, WebsocketConnection,
+  type Connection, type ResponseBody, BitsData, BytesData, ChunkedData, Empty,
+  File, StringTreeData, TextData, WebsocketConnection,
 } as http_
 
 // -----------------------------------------------------------------------------
@@ -135,6 +137,7 @@ fn call_handler(
     Response(body:, ..) -> {
       let sent = case body {
         File(descriptor, size) -> handle_resp_file(req, resp, descriptor, size)
+        ChunkedData(yielder) -> handle_resp_chunked(req, resp, yielder)
         _ -> handle_resp_body(req, resp, body)
       }
 
@@ -153,6 +156,7 @@ fn call_handler(
 // RESPONSE HANDLING
 // -----------------------------------------------------------------------------
 
+/// Handles the file response body and sends it to the client
 fn handle_resp_file(
   req: Request(Connection),
   resp: Response(ResponseBody),
@@ -161,12 +165,10 @@ fn handle_resp_file(
 ) -> Result(Nil, glisten.SocketReason) {
   let assert option.Some(http_version) = req.body.http_version
 
-  let resp =
+  let sent =
     response.set_body(resp, bytes_tree.new())
     |> http_.append_default_headers(req, http_version)
-
-  let sent =
-    encoder.setup_encoded_response(resp)
+    |> encoder.setup_encoded_response()
     |> transport.send(req.body.transport, req.body.socket, _)
     |> result.try(fn(_) {
       file.send(req.body.transport, req.body.socket, descriptor, size)
@@ -176,6 +178,37 @@ fn handle_resp_file(
   let _ = file.close(descriptor)
 
   sent
+}
+
+/// Handles the chunked response body and sends it to the client
+fn handle_resp_chunked(
+  req: Request(Connection),
+  resp: Response(ResponseBody),
+  yielder: Yielder(BitArray),
+) -> Result(Nil, glisten.SocketReason) {
+  let assert option.Some(http_version) = req.body.http_version
+
+  response.set_body(resp, bytes_tree.new())
+  |> http_.append_default_headers(req, http_version)
+  |> encoder.setup_encoded_response()
+  |> transport.send(req.body.transport, req.body.socket, _)
+  |> result.try(fn(_) {
+    yielder.try_fold(yielder, Nil, fn(_, chunk) {
+      bytes_tree.new()
+      |> bytes_tree.append_string(to_hex_string(bit_array.byte_size(chunk)))
+      |> bytes_tree.append(<<"\r\n">>)
+      |> bytes_tree.append(chunk)
+      |> bytes_tree.append(<<"\r\n">>)
+      |> transport.send(req.body.transport, req.body.socket, _)
+    })
+    |> result.try(fn(_) {
+      transport.send(
+        req.body.transport,
+        req.body.socket,
+        bytes_tree.from_bit_array(<<"0\r\n\r\n">>),
+      )
+    })
+  })
 }
 
 /// Handles the response body and sends it to the client
@@ -207,3 +240,10 @@ fn is_connection_close(resp: Response(a)) -> Bool {
     _ -> False
   }
 }
+
+fn to_hex_string(integer: Int) -> String {
+  integer_to_list(integer, 16)
+}
+
+@external(erlang, "erlang", "integer_to_list")
+fn integer_to_list(integer: Int, base: Int) -> String
