@@ -7,7 +7,7 @@
 - Add `Request` and `Response` aliases.
 - Add new response body: `File` and `ChunkedData`. They can be set with `ewe.file` and `ewe.chunked`.
 - Fix server still listening on a socket after `connection: close`.
-- Kept alive connection closes after 10_000 milliseconds of idling. Can be adjusted in builder using `ewe.idle_timeout`.
+- Keep-alive connection closes after 10_000 milliseconds of idling. Can be adjusted in builder using `ewe.idle_timeout`.
 
 ### WebSocket
 - Add WebSocket connection failures for control frames with payloads up to 125 octets.
@@ -15,6 +15,7 @@
 - Store incomplete frames in WebSocket state until they are fully received.
 - Ensure unexpected continuation frames correctly cause an abnormal stop.
 - Add handling for control frames interleaved with fragmented data frames.
+- Overall match implementation to pass Autobahn TestSuite.
 
 
 # v0.9.0
