@@ -14,6 +14,8 @@ pub fn handle_request(
     ["auth", "login"] -> auth.login(req, ctx)
     ["auth", "register"] -> auth.register(req, ctx)
     ["auth", "logout"] -> auth.logout(req)
+    ["auth", "delete"] -> auth.delete(req, ctx)
+
     ["session"] -> auth.session(req, ctx)
 
     ["tasks"] -> task.all(req, ctx)

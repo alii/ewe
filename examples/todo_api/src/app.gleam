@@ -21,7 +21,7 @@ pub fn main() -> Nil {
   process.sleep_forever()
 }
 
-fn start_app_supervisor(
+pub fn start_app_supervisor(
   pool_name: process.Name(pog.Message),
 ) -> Result(actor.Started(supervisor.Supervisor), actor.StartError) {
   let pool_child = db.create_pog_pool_child(pool_name)
@@ -33,7 +33,7 @@ fn start_app_supervisor(
   |> supervisor.start()
 }
 
-fn create_server_child(
+pub fn create_server_child(
   pool_name: process.Name(pog.Message),
 ) -> supervision.ChildSpecification(supervisor.Supervisor) {
   let assert Ok(port) = envoy.get("APP_PORT") |> result.try(int.parse)

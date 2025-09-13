@@ -106,6 +106,45 @@ pub fn login(req: Request(Connection), ctx: Context) -> Response(ResponseBody) {
   |> Ok
 }
 
+pub fn delete(req: Request(Connection), ctx: Context) -> Response(ResponseBody) {
+  use <- web.require_method(req, http.Post)
+  use #(username, password) <- web.require_json(req, credentials_decoder)
+
+  use <- ewe.use_expression()
+
+  use user <- result.try(case sql.find_user_by_username(ctx.db, username) {
+    Ok(pog.Returned(count: 1, rows: [user])) -> Ok(user)
+    Ok(pog.Returned(count: 0, rows: [])) ->
+      response.new(401)
+      |> web.json_body(web.ErrorMessage("Invalid username or password"))
+      |> Error
+
+    Error(issue) -> Error(web.internal("error in find_user_by_username", issue))
+    Ok(never) ->
+      Error(web.internal(unexpected_message("find_user_by_username"), never))
+  })
+
+  use verified <- result.try(
+    argus.verify(user.password_hash, password)
+    |> result.map_error(web.internal("error in verifying password", _)),
+  )
+
+  use <- bool.guard(
+    when: !verified,
+    return: response.new(401)
+      |> web.json_body(web.ErrorMessage("Invalid username or password"))
+      |> Error,
+  )
+
+  case sql.delete_user(ctx.db, user.id) {
+    Ok(_) ->
+      response.new(200)
+      |> web.json_body(web.OkMessage("User deleted"))
+      |> Ok
+    Error(issue) -> Error(web.internal("error in delete_user", issue))
+  }
+}
+
 pub fn logout(req: Request(Connection)) -> Response(ResponseBody) {
   use <- web.require_method(req, http.Post)
 

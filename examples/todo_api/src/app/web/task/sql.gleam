@@ -79,7 +79,13 @@ where id = $1;"
 /// > [squirrel package](https://github.com/giacomocavalieri/squirrel).
 ///
 pub type GetTaskRow {
-  GetTaskRow(id: Int, title: String, description: String, completed: Bool)
+  GetTaskRow(
+    id: Int,
+    title: String,
+    description: String,
+    completed: Bool,
+    user_id: Int,
+  )
 }
 
 /// Runs the `get_task` query
@@ -91,22 +97,21 @@ pub type GetTaskRow {
 pub fn get_task(
   db: pog.Connection,
   arg_1: Int,
-  arg_2: Int,
 ) -> Result(pog.Returned(GetTaskRow), pog.QueryError) {
   let decoder = {
     use id <- decode.field(0, decode.int)
     use title <- decode.field(1, decode.string)
     use description <- decode.field(2, decode.string)
     use completed <- decode.field(3, decode.bool)
-    decode.success(GetTaskRow(id:, title:, description:, completed:))
+    use user_id <- decode.field(4, decode.int)
+    decode.success(GetTaskRow(id:, title:, description:, completed:, user_id:))
   }
 
-  "select id, title, description, completed
+  "select id, title, description, completed, user_id
 from tasks
-where id = $1 and user_id = $2;"
+where id = $1;"
   |> pog.query
   |> pog.parameter(pog.int(arg_1))
-  |> pog.parameter(pog.int(arg_2))
   |> pog.returning(decoder)
   |> pog.execute(db)
 }

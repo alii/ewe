@@ -1,4 +1,5 @@
 import ewe.{type Connection, type ResponseBody}
+import gleam/bool
 import gleam/dynamic/decode
 import gleam/function
 import gleam/http
@@ -160,7 +161,7 @@ pub fn update_task(
 
   use <- ewe.use_expression()
 
-  use task <- result.try(case sql.get_task(ctx.db, id, claims.user_id) {
+  use task <- result.try(case sql.get_task(ctx.db, id) {
     Ok(pog.Returned(count: 1, rows: [task])) -> {
       Ok(task)
     }
@@ -172,6 +173,11 @@ pub fn update_task(
     Error(issue) -> Error(web.internal("error in get_task", issue))
     Ok(never) -> Error(web.internal(unexpected_message("get_task"), never))
   })
+
+  use <- bool.guard(
+    when: task.user_id != claims.user_id,
+    return: Error(web.forbidden()),
+  )
 
   let update =
     sql.update_task(
@@ -209,8 +215,8 @@ pub fn delete_task(
 
   use <- ewe.use_expression()
 
-  use Nil <- result.try(case sql.get_task(ctx.db, id, claims.user_id) {
-    Ok(pog.Returned(count: 1, rows: [_])) -> Ok(Nil)
+  use task <- result.try(case sql.get_task(ctx.db, id) {
+    Ok(pog.Returned(count: 1, rows: [task])) -> Ok(task)
     Ok(pog.Returned(count: 0, rows: [])) ->
       response.new(404)
       |> web.json_body(web.ErrorMessage("Task not found"))
@@ -218,6 +224,11 @@ pub fn delete_task(
     Error(issue) -> Error(web.internal("error in get_task", issue))
     Ok(never) -> Error(web.internal(unexpected_message("get_task"), never))
   })
+
+  use <- bool.guard(
+    when: task.user_id != claims.user_id,
+    return: Error(web.forbidden()),
+  )
 
   case sql.delete_task(ctx.db, id) {
     Ok(_) ->

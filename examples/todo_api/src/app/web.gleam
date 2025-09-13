@@ -19,18 +19,15 @@ pub fn auth_middleware(
   ctx: Context,
   next: fn(jwt.Claims) -> Response(ResponseBody),
 ) -> Response(ResponseBody) {
-  use <- ewe.use_expression()
-
-  use session <- result.try(
-    request.get_cookies(req)
-    |> list.key_find("session")
-    |> result.replace_error(unauthorized()),
-  )
-
-  case jwt.verify_token(session, ctx.jwt_secret) {
-    Ok(claims) -> Ok(next(claims))
-    Error(_) -> Error(unauthorized())
-  }
+  request.get_cookies(req)
+  |> list.key_find("session")
+  |> result.try(fn(session) {
+    case jwt.verify_token(session, ctx.jwt_secret) {
+      Ok(claims) -> Ok(next(claims))
+      Error(_) -> Error(Nil)
+    }
+  })
+  |> result.unwrap(unauthorized())
 }
 
 pub type JsonBody {
@@ -57,6 +54,11 @@ pub fn invalid_body() -> Response(ResponseBody) {
 pub fn unauthorized() -> Response(ResponseBody) {
   response.new(401)
   |> json_body(ErrorMessage("Unauthorized"))
+}
+
+pub fn forbidden() -> Response(ResponseBody) {
+  response.new(403)
+  |> json_body(ErrorMessage("Action not allowed on a not owned task"))
 }
 
 pub fn method_not_allowed(method: List(http.Method)) -> Response(ResponseBody) {
@@ -130,5 +132,5 @@ pub fn require_json(
 }
 
 pub fn unexpected_message(fn_name: String) -> String {
-  "unexpected return from" <> fn_name
+  "unexpected return from " <> fn_name
 }

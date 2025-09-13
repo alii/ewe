@@ -10,3 +10,6 @@ squirrel:
 
 start:
 	$(ENV_VARS) gleam run
+
+tests:
+	$(ENV_VARS) gleam test
