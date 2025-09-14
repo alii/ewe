@@ -80,10 +80,6 @@
 //// - [continue_with_selector](#continue_with_selector)
 //// - [stop](#stop)
 //// - [stop_abnormal](#stop_abnormal)
-//// #### Experimental
-//// - [use_expression](#use_expression)
-
-// TODO: figure something out with getting server information
 
 // -----------------------------------------------------------------------------
 // IMPORTS
@@ -316,7 +312,8 @@ pub fn json(response: HttpResponse(a), json json: StringTree) -> Response {
   |> response.set_header("content-type", "application/json; charset=utf-8")
 }
 
-/// Sets response body from yielder, sets `transfer-encoding` header to `chunked`.
+/// Sets response body from yielder, sets `transfer-encoding` header to 
+/// `chunked`.
 /// 
 pub fn chunked(
   response: HttpResponse(a),
@@ -436,7 +433,8 @@ pub fn new(handler: Handler) -> Builder {
   )
 }
 
-/// Binds server to a specific interface. Crashes program if interface is invalid.
+/// Binds server to a specific interface. Crashes program if interface is 
+/// invalid.
 /// 
 pub fn bind(builder: Builder, interface interface: String) -> Builder {
   Builder(..builder, interface:)
@@ -517,7 +515,8 @@ pub fn on_crash(builder: Builder, on_crash: Response) -> Builder {
   Builder(..builder, on_crash:)
 }
 
-/// Sets a custom idle timeout in milliseconds for connections. If provided timeout is less than 0, 10_000ms will be used instead.
+/// Sets a custom idle timeout in milliseconds for connections. If
+/// provided timeout is less than 0, 10_000ms will be used instead.
 /// 
 pub fn idle_timeout(builder: Builder, idle_timeout: Int) -> Builder {
   case idle_timeout {
@@ -615,8 +614,8 @@ pub type Request =
 /// Reads body from a request. If request body is malformed, `InvalidBody`
 /// error is returned. On success, returns a request with body converted to
 /// `BitArray`.
-/// - When `transfer-encoding` header set as `chunked`, `BodyTooLarge` error is returned if
-/// accumulated body is larger than `size_limit`.
+/// - When `transfer-encoding` header set as `chunked`, `BodyTooLarge` error is 
+/// returned if accumulated body is larger than `size_limit`.
 /// - Ensures that `content-length` is in `size_limit` scope.
 /// 
 pub fn read_body(
@@ -630,7 +629,8 @@ pub fn read_body(
   }
 }
 
-/// Alias for consumer type for reading N amount of bytes from the request body stream.
+/// Alias for consumer type for reading N amount of bytes from the request body 
+/// stream.
 /// 
 pub type Consumer =
   fn(Int) -> Result(Stream, BodyError)
@@ -834,45 +834,4 @@ pub fn send_text_frame(
     conn.deflate,
     text,
   )
-}
-
-// -----------------------------------------------------------------------------
-// EXPERIMENTAL
-// -----------------------------------------------------------------------------
-
-/// Experimental function that simplifies error handling in handlers when
-/// working with `Result` type.
-/// 
-/// ## Example
-/// 
-/// ```gleam
-/// pub fn handle_echo(
-///   req: Request,
-/// ) -> Response {
-///   let content_type =
-///     request.get_header(req, "content-type")
-///     |> result.unwrap("text/plain")
-///
-///    // Start the use_expression block
-///    use <- ewe.use_expression()
-///
-///    // Now you can use result.try with use expressions
-///    // If any step fails, the error response is automatically returned
-///    use req <- result.try(
-///      ewe.read_body(req, 1024)
-///      |> result.replace_error(
-///        response.new(400)
-///        |> ewe.json(error_json("Invalid request body")),
-///      ),
-///    )
-///
-///    response.new(200)
-///    |> ewe.bits(req.body)
-///    |> response.set_header("content-type", content_type)
-///    |> Ok 
-///}
-/// ```
-///
-pub fn use_expression(handler: fn() -> Result(Response, Response)) -> Response {
-  result.unwrap_both(handler())
 }

@@ -2,6 +2,11 @@
 
 # Unreleased
 
+- Remove `ewe.use_expression`.
+- Improve validation of `upgrade` header when upgrading to WebSocket connection.
+
+# v0.10.0
+
 ### HTTP
 - Add `date` header to responses.
 - Add `Request` and `Response` aliases.

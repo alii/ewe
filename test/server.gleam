@@ -19,17 +19,14 @@ pub fn echoer() {
       request.get_header(req, "content-type")
       |> result.unwrap("text/plain")
 
-    use <- ewe.use_expression()
-
-    use req <- result.try(
-      ewe.read_body(req, 1024)
-      |> result.replace_error(ewe.empty(response.new(400))),
-    )
-
-    response.new(200)
-    |> ewe.bits(req.body)
-    |> response.set_header("content-type", content_type)
-    |> Ok
+    case ewe.read_body(req, 1024) {
+      Ok(req) -> {
+        response.new(200)
+        |> ewe.bits(req.body)
+        |> response.set_header("content-type", content_type)
+      }
+      Error(_) -> ewe.empty(response.new(400))
+    }
   })
 }
 

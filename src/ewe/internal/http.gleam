@@ -346,13 +346,13 @@ pub fn upgrade_websocket(
     Error(_) -> Error(MissingConnectionHeader)
   })
 
-  use _ <- try(case request.get_header(req, "upgrade") {
-    Ok("websocket") -> Ok(Nil)
-    // TODO: figure this out
-    Ok("WebSocket") -> Ok(Nil)
-    Ok(_) -> Error(InvalidUpgradeHeader)
-    Error(_) -> Error(MissingUpgradeHeader)
-  })
+  use _ <- try(
+    case request.get_header(req, "upgrade") |> result.map(string.lowercase) {
+      Ok("websocket") -> Ok(Nil)
+      Ok(_) -> Error(InvalidUpgradeHeader)
+      Error(_) -> Error(MissingUpgradeHeader)
+    },
+  )
 
   use <- bool.guard(
     request.get_header(req, "sec-websocket-version") == Error(Nil),
