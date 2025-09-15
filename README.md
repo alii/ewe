@@ -10,7 +10,7 @@ ewe [/juː/] - fluffy package for building web servers. Inspired by [mist](https
 ## Installation
 
 ```sh
-gleam add ewe@0.10.0 gleam_erlang gleam_otp gleam_http gleam_json gleam_yielder
+gleam add ewe@0.10.0 gleam_erlang gleam_otp gleam_http gleam_yielder
 ```
 
 ## Usage
@@ -31,14 +31,17 @@ import gleam/yielder
 import ewe.{type Request, type Response}
 
 pub fn main() {
+  // Start a process registry to manage WebSocket connections
   let assert Ok(started) = process_registry()
   let registry = started.data
 
+  // Define crash response for server errors
   let on_crash =
     "Something went wrong, try again later"
     |> ewe.TextData
     |> response.set_body(response.new(500), _)
 
+  // Configure and start the web server on port 4000
   let assert Ok(_) =
     ewe.new(handler(_, registry))
     |> ewe.on_crash(on_crash)
@@ -49,15 +52,20 @@ pub fn main() {
   process.sleep_forever()
 }
 
+// Main HTTP request handler that routes requests to different endpoints
 fn handler(req: Request, registry: Subject(ProcessRegistryMessage)) -> Response {
   case request.path_segments(req) {
+    // GET /hello/:name - Simple greeting endpoint
     ["hello", name] -> {
       { "Hello, " <> name <> "!" }
       |> ewe.TextData
       |> response.set_body(response.new(200), _)
     }
+    // POST /echo - Echo request body back to client
     ["echo"] -> handle_echo(req, None)
+    // POST /stream/:size - Stream request body in chunks
     ["stream", sized] -> handle_echo(req, Some(sized))
+    // WebSocket upgrade endpoint
     ["ws"] ->
       ewe.upgrade_websocket(
         req,
@@ -74,12 +82,14 @@ fn handler(req: Request, registry: Subject(ProcessRegistryMessage)) -> Response 
           io.println("WebSocket connection closed!")
         },
       )
+    // POST /ws/announce/:text - Broadcast message to all WebSocket connections
     ["ws", "announce", text] -> {
       announce(registry, text)
 
       response.new(200)
       |> response.set_body(ewe.Empty)
     }
+    // 404 for unknown routes
     _ -> {
       "Unknown endpoint"
       |> ewe.TextData
@@ -88,6 +98,7 @@ fn handler(req: Request, registry: Subject(ProcessRegistryMessage)) -> Response 
   }
 }
 
+// Helper function to consume request body in chunks for streaming
 fn consume_body(
   size: Int,
 ) -> fn(ewe.Consumer) -> yielder.Step(BitArray, ewe.Consumer) {
@@ -107,6 +118,7 @@ fn consume_body(
   }
 }
 
+// Handler for echo endpoints - returns request body back to client
 fn handle_echo(req: Request, stream: Option(String)) -> Response {
   let content_type =
     request.get_header(req, "content-type")
@@ -118,6 +130,7 @@ fn handle_echo(req: Request, stream: Option(String)) -> Response {
     |> response.set_body(response.new(400), _)
 
   case option.map(stream, int.parse) {
+    // Stream mode: return body as chunked response
     Some(Ok(size)) -> {
       let assert Ok(consumer) = ewe.stream_body(req)
 
@@ -127,6 +140,7 @@ fn handle_echo(req: Request, stream: Option(String)) -> Response {
       |> response.set_header("content-type", content_type)
     }
     Some(Error(_)) -> invalid_body
+    // Regular mode: read entire body and echo back
     None -> {
       case ewe.read_body(req, 1024) {
         Ok(req) ->
@@ -143,6 +157,7 @@ type Broadcast {
   Announcement(String)
 }
 
+// WebSocket message handler - processes incoming WebSocket frames
 fn handle_websocket(
   conn: ewe.WebsocketConnection,
   state: Nil,
@@ -155,15 +170,18 @@ fn handle_websocket(
     }
     ewe.Text("Exit") -> ewe.stop()
 
+    // Handle broadcast messages from registry
     ewe.User(Announcement(text)) -> {
       let _ = ewe.send_text_frame(conn, "Announcement: " <> text)
       ewe.continue(state)
     }
 
+    // Echo binary frames back to client
     ewe.Binary(binary) -> {
       let _ = ewe.send_binary_frame(conn, binary)
       ewe.continue(state)
     }
+    // Echo text frames back to client
     ewe.Text(text) -> {
       let _ = ewe.send_text_frame(conn, text)
       ewe.continue(state)
@@ -176,6 +194,7 @@ type ProcessRegistryMessage {
   Announce(Broadcast)
 }
 
+// Creates a registry actor to manage WebSocket connections for broadcasting
 fn process_registry() -> Result(
   actor.Started(Subject(ProcessRegistryMessage)),
   actor.StartError,
@@ -193,6 +212,7 @@ fn process_registry() -> Result(
   |> actor.start()
 }
 
+// Register a WebSocket connection with the broadcast registry
 fn register(
   registry: Subject(ProcessRegistryMessage),
   subject: Subject(Broadcast),
@@ -200,6 +220,7 @@ fn register(
   process.send(registry, Register(subject))
 }
 
+// Send announcement to all registered WebSocket connections
 fn announce(registry: Subject(ProcessRegistryMessage), message: String) -> Nil {
   process.send(registry, Announce(Announcement(message)))
 }
