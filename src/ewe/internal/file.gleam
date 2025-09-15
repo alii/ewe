@@ -37,15 +37,16 @@ pub fn send(
   transport: Transport,
   socket: Socket,
   descriptor: IoDevice,
+  offset: Int,
   size: Int,
 ) -> Result(Nil, SendError) {
   case transport {
     transport.Tcp(..) -> {
-      send_file(descriptor, socket, 0, size, [])
+      send_file(descriptor, socket, offset, size, [])
       |> result.map_error(SocketIssue)
     }
     transport.Ssl(..) -> {
-      pread(descriptor, 0, size)
+      pread(descriptor, offset, size)
       |> result.map_error(FileIssue)
       |> result.try(fn(bits) {
         transport.send(transport, socket, bytes_tree.from_bit_array(bits))

@@ -52,7 +52,7 @@
 //// - [listening_random](#listening_random)
 //// - [enable_ipv6](#enable_ipv6)
 //// - [enable_tls](#enable_tls)
-//// - [set_information_name](#set_information_name)
+//// - [with_name](#with_name)
 //// - [quiet](#quiet)
 //// - [idle_timeout](#idle_timeout)
 //// - [on_start](#on_start)
@@ -64,14 +64,7 @@
 //// - [read_body](#read_body)
 //// - [stream_body](#stream_body)
 //// #### Response
-//// - [text](#text)
-//// - [bytes](#bytes)
-//// - [bits](#bits)
-//// - [string_tree](#string_tree)
-//// - [empty](#empty)
-//// - [json](#json)
 //// - [file](#file)
-//// - [chunked](#chunked)
 //// #### Websocket
 //// - [upgrade_websocket](#upgrade_websocket)
 //// - [send_binary_frame](#send_binary_frame)
@@ -99,11 +92,11 @@ import gleam/otp/actor
 import gleam/otp/static_supervisor.{type Supervisor} as supervisor
 import gleam/otp/supervision
 import gleam/result
-import gleam/string
 import gleam/string_tree.{type StringTree}
 import gleam/yielder
 
 import glisten
+import glisten/internal/listener
 import glisten/socket/options as glisten_options
 import glisten/transport
 
@@ -113,15 +106,15 @@ import ewe/internal/gramps/websocket as ws
 import ewe/internal/file as file_
 import ewe/internal/handler as handler_
 import ewe/internal/http as http_
-import ewe/internal/information
 import ewe/internal/websocket as websocket_
 
 // -----------------------------------------------------------------------------
 // CONNECTION
 // -----------------------------------------------------------------------------
 
-/// Represents a connection between a client and a server, stored inside a
-/// `Request`. Can be converted to a `BitArray` using `ewe.read_body`.
+/// Represents a default body stored inside a `Request` type. Contains
+/// important information for retrieving the original request body or client's
+/// information. Can be converted to a `BitArray` using `ewe.read_body`.
 ///
 pub type Connection =
   http_.Connection
@@ -130,15 +123,14 @@ pub type Connection =
 // IP ADDRESS
 // -----------------------------------------------------------------------------
 
-/// Represents an IP address. Appears when accessing client's information
-/// (`ewe.client_stats`) or `on_start` handler (`ewe.on_start`).
-///
+/// Represents an IP address of a client/server.
+/// 
 pub type IpAddress {
   IpV4(Int, Int, Int, Int)
   IpV6(Int, Int, Int, Int, Int, Int, Int, Int)
 }
 
-/// Converts an `IpAddress` to a string for later printing.
+/// Converts an `IpAddress` to a `String`.
 /// 
 pub fn ip_address_to_string(address address: IpAddress) -> String {
   ewe_to_glisten_ip(address)
@@ -173,14 +165,15 @@ fn ewe_to_glisten_ip(ip: IpAddress) -> glisten.IpAddress {
 // INFORMATION
 // -----------------------------------------------------------------------------
 
-/// Represents client or server information. Can be retrieved using
-/// `ewe.get_server_info` or `ewe.get_client_info`.
+/// Represents client/server information. Can be retrieved using
+/// `ewe.get_client_info`/`ewe.get_server_info`.
 /// 
 pub type SocketAddress {
   SocketAddress(ip: IpAddress, port: Int)
 }
 
-/// Performs an attempt to get the client's socket address.
+/// Attempts to get the client's socket address using request's
+/// connection.
 /// 
 pub fn get_client_info(
   connection connection: Connection,
@@ -192,45 +185,73 @@ pub fn get_client_info(
 }
 
 /// Retrieves server's socket address. Requires the same name as the one used in
-/// `ewe.with_name` and server to be started. Otherwise, will crash the program.
+/// `ewe.with_name` and server to be started.
 /// 
 pub fn get_server_info(
-  named name: process.Name(information.Message(SocketAddress)),
-) -> Result(SocketAddress, Nil) {
-  information.get(process.named_subject(name))
+  listener_name name: process.Name(listener.Message),
+) -> SocketAddress {
+  let server_info = glisten.get_server_info(name, 10_000)
+  let ip_address = glisten_to_ewe_ip(server_info.ip_address)
+
+  SocketAddress(ip: ip_address, port: server_info.port)
 }
 
 // -----------------------------------------------------------------------------
 // RESPONSE
 // -----------------------------------------------------------------------------
 
-/// Represents a response body. To set the response body, use the following
-/// functions: 
+/// Represents possible response body options.
 /// 
-/// - `ewe.text`
-/// - `ewe.bytes`
-/// - `ewe.bits`
-/// - `ewe.string_tree`
-/// - `ewe.empty`
-/// - `ewe.json`
-/// - `ewe.file`
-/// - `ewe.chunked`
+/// Types for direct usage:
+/// - Regular data: `TextData`, `BytesData`, `BitsData`, `StringTreeData`,
+///   `Empty`
+/// - Chunked data: `ChunkedData`
 /// 
-pub opaque type ResponseBody {
+/// Types that should not be used directly:
+/// - `File`: see `ewe.file` to construct it.
+/// - `WebsocketConnection`: used in `ewe.upgrade_websocket` for correct
+/// WebSocket connection handling.
+/// 
+pub type ResponseBody {
+  /// Allows to set response body from a string.
+  /// 
   TextData(String)
+  /// Allows to set response body from bytes.
+  /// 
   BytesData(BytesTree)
+  /// Allows to set response body from bits.
+  /// 
   BitsData(BitArray)
+  /// Allows to set response body from a string tree.
+  /// 
   StringTreeData(StringTree)
-
-  ChunkedData(yielder.Yielder(BitArray))
-  File(descriptor: file_.IoDevice, size: Int)
-
-  WebsocketConnection(Selector(process.Down))
-
+  /// Allows to set empty response body.
+  /// 
   Empty
+
+  /// Allows to send response body in chunks with `chunked` transfer encoding.
+  /// 
+  ChunkedData(yielder.Yielder(BitArray))
+
+  /// Allows to set response body from a file more efficiently rather than
+  /// sending contents in regular data types.
+  /// 
+  File(descriptor: file_.IoDevice, offset: Int, size: Int)
+
+  /// Allows upgrading request to a WebSocket connection.
+  /// 
+  WebsocketConnection(MonitorSelector)
 }
 
-/// A convenient alias for a Http response with a `ResponseBody` as the body.
+/// Used to monitor a WebSocket connection. Use `MonitorSelector` only when you
+/// know what you are doing.
+/// 
+@internal
+pub type MonitorSelector {
+  MonitorSelector(Selector(process.Down))
+}
+
+/// A convenient alias for a HTTP response with a `ResponseBody` as the body.
 /// 
 pub type Response =
   HttpResponse(ResponseBody)
@@ -243,92 +264,30 @@ fn transform_response_body(resp: Response) -> HttpResponse(http_.ResponseBody) {
     StringTreeData(string_tree) -> http_.StringTreeData(string_tree)
 
     ChunkedData(yielder) -> http_.ChunkedData(yielder)
-    File(descriptor, size) -> http_.File(descriptor, size)
+    File(descriptor, offset, size) -> http_.File(descriptor, offset, size)
 
-    WebsocketConnection(selector) -> http_.WebsocketConnection(selector)
+    WebsocketConnection(MonitorSelector(selector)) ->
+      http_.WebsocketConnection(selector)
 
     Empty -> http_.Empty
   })
 }
 
-/// Sets response body from string, sets `content-type` to
-/// `text/plain; charset=utf-8` and `content-length` headers.
-/// 
-pub fn text(response: HttpResponse(a), text: String) -> Response {
-  response.set_body(response, TextData(text))
-  |> response.set_header("content-type", "text/plain; charset=utf-8")
-  |> response.set_header(
-    "content-length",
-    int.to_string(string.byte_size(text)),
-  )
-}
-
-/// Sets response body from bytes, sets `content-length` header.
-/// 
-pub fn bytes(response: HttpResponse(a), bytes: BytesTree) -> Response {
-  response.set_body(response, BytesData(bytes))
-  |> response.set_header(
-    "content-length",
-    int.to_string(bytes_tree.byte_size(bytes)),
-  )
-}
-
-/// Sets response body from bits, sets `content-length` header.
-/// 
-pub fn bits(response: HttpResponse(a), bits: BitArray) -> Response {
-  response.set_body(response, BitsData(bits))
-  |> response.set_header(
-    "content-length",
-    int.to_string(bit_array.byte_size(bits)),
-  )
-}
-
-/// Sets response body from string tree, sets `content-length` header.
-/// 
-pub fn string_tree(
-  response: HttpResponse(a),
-  string_tree: StringTree,
-) -> Response {
-  response.set_body(response, StringTreeData(string_tree))
-  |> response.set_header(
-    "content-length",
-    int.to_string(string_tree.byte_size(string_tree)),
-  )
-}
-
-/// Sets response body to empty, sets `content-length` header to `0`.
-/// 
-pub fn empty(response: HttpResponse(a)) -> Response {
-  response.set_body(response, Empty)
-  |> response.set_header("content-length", "0")
-}
-
-/// Sets response body from string tree (use `gleam_json` package and encode
-/// using `json.to_string_tree`), sets `content-type` to `application/json;
-/// charset=utf-8` and `content-length` headers.
-/// 
-pub fn json(response: HttpResponse(a), json json: StringTree) -> Response {
-  string_tree(response, json)
-  |> response.set_header("content-type", "application/json; charset=utf-8")
-}
-
-/// Sets response body from yielder, sets `transfer-encoding` header to 
-/// `chunked`.
-/// 
-pub fn chunked(
-  response: HttpResponse(a),
-  yielder: yielder.Yielder(BitArray),
-) -> Response {
-  response.set_body(response, ChunkedData(yielder))
-  |> response.set_header("transfer-encoding", "chunked")
-}
-
-/// Possible errors that can occur when setting response body from file.
+/// Possible errors that can occur when setting response body from a file.
 /// 
 pub type FileError {
+  /// File does not exist.
+  /// 
   NoEntry
+  /// Missing permission for reading the file, or for searching one of the
+  /// parents directories.
+  /// 
   NoAccess
+  /// The named file is a directory.
+  /// 
   IsDirectory
+  /// Untypical file error.
+  /// 
   UnknownFileError(dynamic.Dynamic)
 }
 
@@ -344,15 +303,20 @@ fn internal_to_file_error(error: file_.FileError) -> FileError {
 /// Sets response body from file, sets `content-length` header.
 /// 
 pub fn file(
-  response: HttpResponse(a),
   path: String,
-) -> Result(Response, FileError) {
-  file_.open(path)
-  |> result.map_error(internal_to_file_error)
-  |> result.map(fn(file) {
-    response.set_body(response, File(file.descriptor, file.size))
-    |> response.set_header("content-length", int.to_string(file.size))
-  })
+  offset offset: Option(Int),
+  limit limit: Option(Int),
+) -> Result(ResponseBody, FileError) {
+  // TODO: handle invalid offset + limit?
+  case file_.open(path) {
+    Ok(file) ->
+      Ok(File(
+        file.descriptor,
+        offset: option.unwrap(offset, 0),
+        size: option.unwrap(limit, file.size),
+      ))
+    Error(error) -> Error(internal_to_file_error(error))
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -365,7 +329,7 @@ type Handler =
 type OnStart =
   fn(http.Scheme, SocketAddress) -> Nil
 
-/// Ewe's server builder. Contains all server's configuration. Can be adjusted
+/// Ewe's server builder. Contains all server configurations. Can be adjusted
 /// with the following functions:
 /// - `ewe.bind`
 /// - `ewe.bind_all`
@@ -373,7 +337,7 @@ type OnStart =
 /// - `ewe.listening_random`
 /// - `ewe.enable_ipv6`
 /// - `ewe.enable_tls`
-/// - `ewe.set_information_name`
+/// - `ewe.with_name`
 /// - `ewe.on_start`
 /// - `ewe.quiet`
 /// - `ewe.on_crash`
@@ -388,7 +352,7 @@ pub opaque type Builder {
     tls: Option(#(String, String)),
     on_start: OnStart,
     on_crash: Response,
-    information_name: process.Name(information.Message(SocketAddress)),
+    listener_name: process.Name(listener.Message),
     idle_timeout: Int,
   )
 }
@@ -400,7 +364,7 @@ pub opaque type Builder {
 /// - interface: `127.0.0.1`
 /// - No ipv6 support
 /// - No TLS support
-/// - Default process name for server information retrieval
+/// - Default listener name for server information retrieval
 /// - on_start: prints `Listening on <scheme>://<ip_address>:<port>`
 /// - on_crash: empty 500 response
 /// - idle_timeout: connection is closed after 10_000ms of inactivity
@@ -428,12 +392,12 @@ pub fn new(handler: Handler) -> Builder {
       io.println("Listening on " <> url)
     },
     on_crash: response.new(500) |> response.set_body(Empty),
-    information_name: process.new_name("ewe_server_info"),
+    listener_name: process.new_name("glisten_listener"),
     idle_timeout: 10_000,
   )
 }
 
-/// Binds server to a specific interface. Crashes program if interface is 
+/// Binds server to a specific interface. Crashes program if the interface is 
 /// invalid.
 /// 
 pub fn bind(builder: Builder, interface interface: String) -> Builder {
@@ -485,13 +449,13 @@ pub fn enable_tls(
 }
 
 /// Sets a custom process name for server information retrieval, allowing to
-/// use `ewe.get_server_info` after server starts.
+/// use `ewe.get_server_info` after the server starts.
 /// 
-pub fn set_information_name(
+pub fn with_name(
   builder: Builder,
-  name: process.Name(information.Message(SocketAddress)),
+  name: process.Name(listener.Message),
 ) -> Builder {
-  Builder(..builder, information_name: name)
+  Builder(..builder, listener_name: name)
 }
 
 /// Sets a custom handler that will be called after server starts.
@@ -503,7 +467,7 @@ pub fn on_start(
   Builder(..builder, on_start:)
 }
 
-/// Sets empty `on_start` function.
+/// Sets an empty `on_start` function.
 /// 
 pub fn quiet(builder: Builder) -> Builder {
   Builder(..builder, on_start: fn(_, _) { Nil })
@@ -529,18 +493,13 @@ pub fn idle_timeout(builder: Builder, idle_timeout: Int) -> Builder {
 // SERVER
 // -----------------------------------------------------------------------------
 
-/// Starts the server.
+/// Starts the server with the provided configuration.
 /// 
 pub fn start(
   builder: Builder,
 ) -> Result(actor.Started(Supervisor), actor.StartError) {
-  let name = process.new_name("ewe_glisten")
-
   let handler = fn(req) { transform_response_body(builder.handler(req)) }
   let on_crash = transform_response_body(builder.on_crash)
-
-  let subject = process.named_subject(builder.information_name)
-  let information = information.worker(builder.information_name)
 
   let glisten_supervisor =
     glisten.new(
@@ -561,19 +520,18 @@ pub fn start(
       }
     }
     // https://github.com/rawhat/glisten/blob/master/src/glisten.gleam#L359
-    |> glisten.start_with_listener_name(builder.port, name)
+    |> glisten.start_with_listener_name(builder.port, builder.listener_name)
     |> result.map(fn(started) {
       let scheme = case builder.tls {
         Some(#(_, _)) -> http.Https
         None -> http.Http
       }
 
-      let server_info = glisten.get_server_info(name, 10_000)
+      let server_info = glisten.get_server_info(builder.listener_name, 10_000)
       let ip_address = glisten_to_ewe_ip(server_info.ip_address)
 
       let server = SocketAddress(ip: ip_address, port: server_info.port)
 
-      information.set(subject, server)
       builder.on_start(scheme, server)
 
       started
@@ -583,11 +541,11 @@ pub fn start(
 
   supervisor.new(supervisor.OneForAll)
   |> supervisor.add(glisten_child)
-  |> supervisor.add(information)
   |> supervisor.start()
 }
 
-/// Creates a supervisor that can be appended to a supervision tree.
+/// Creates a supervisor with the provided configuration that is a child of a
+/// supervision tree.
 /// 
 pub fn supervised(
   builder: Builder,
@@ -602,18 +560,21 @@ pub fn supervised(
 /// Possible errors that can occur when reading a body.
 /// 
 pub type BodyError {
+  /// Body is larger than the provided limit.
   BodyTooLarge
+  /// Body is malformed.
   InvalidBody
 }
 
-/// A convenient alias for a Http request with a `Connection` as the body.
+/// A convenient alias for a HTTP request with a `Connection` as the body.
 /// 
 pub type Request =
   HttpRequest(Connection)
 
-/// Reads body from a request. If request body is malformed, `InvalidBody`
+/// Reads body from the request. If request body is malformed, `InvalidBody`
 /// error is returned. On success, returns a request with body converted to
 /// `BitArray`.
+/// 
 /// - When `transfer-encoding` header set as `chunked`, `BodyTooLarge` error is 
 /// returned if accumulated body is larger than `size_limit`.
 /// - Ensures that `content-length` is in `size_limit` scope.
@@ -629,8 +590,8 @@ pub fn read_body(
   }
 }
 
-/// Alias for consumer type for reading N amount of bytes from the request body 
-/// stream.
+/// A convenient alias for a consumer that reads `N` amount of bytes from the 
+/// request body stream.
 /// 
 pub type Consumer =
   fn(Int) -> Result(Stream, BodyError)
@@ -638,11 +599,16 @@ pub type Consumer =
 /// Used to track the progress of reading the request body stream.
 /// 
 pub type Stream {
+  /// Chunk of data has been consumed.
+  /// 
   Consumed(data: BitArray, next: Consumer)
+  /// Signifies that the request body stream has been fully consumed.
+  ///
   Done
 }
 
-/// Streams the request body.
+/// Returns the consumer function that reads `N` amount of bytes from the
+/// request body stream.
 /// 
 pub fn stream_body(req: Request) -> Result(Consumer, BodyError) {
   case http_.stream_body(req) {
@@ -669,12 +635,12 @@ fn consumer_adapter(
 // WEBSOCKET
 // -----------------------------------------------------------------------------
 
-/// Represents a websocket connection between a client and a server
+/// Represents a WebSocket connection between a client and a server.
 /// 
 pub type WebsocketConnection =
   websocket_.WebsocketConnection
 
-/// Represents instruction on how WebSocket connection should proceed.
+/// Represents an instruction on how WebSocket connection should proceed.
 /// 
 /// - continue processing the WebSocket connection.
 /// - continue processing the WebSocket connection with selector for custom
@@ -729,8 +695,14 @@ fn to_internal_next(
 /// Represents a WebSocket message received from the client.
 /// 
 pub type WebsocketMessage(user_message) {
+  /// Indicate that text frame has been received.
+  /// 
   Text(String)
+  /// Indicate that binary frame has been received.
+  /// 
   Binary(BitArray)
+  /// Indicate that user message has been received from WebSocket selector.
+  /// 
   User(user_message)
 }
 
@@ -754,9 +726,18 @@ fn transform_websocket_message(
 }
 
 /// Upgrade request to a WebSocket connection. If the initial request is not
-/// valid for WebSocket upgrade, 400 response is sent. Handler must return
-/// instruction on how WebSocket connection should proceed.
-///  
+/// valid for WebSocket upgrade, 400 response is sent.
+/// 
+/// `on_init` function is called once process that handles WebSocket connection
+/// is initialized. It must return a tuple with initial state and selector for
+/// custom messages. If there is no custom messages, user can pass the same 
+/// selector from the argument
+/// 
+/// `handler` function is called for every WebSocket message received. It must
+/// return instruction on how WebSocket connection should proceed.
+/// 
+/// `on_close` function is called when WebSocket process is going to be stopped.
+/// 
 pub fn upgrade_websocket(
   req: Request,
   on_init on_init: fn(WebsocketConnection, Selector(user_message)) ->
@@ -799,7 +780,7 @@ pub fn upgrade_websocket(
     )
 
     response.new(500)
-    |> response.set_body(WebsocketConnection(selector))
+    |> response.set_body(WebsocketConnection(MonitorSelector(selector)))
     |> Ok
   }
 

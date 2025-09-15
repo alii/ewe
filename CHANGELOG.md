@@ -2,8 +2,11 @@
 
 # Unreleased
 
-- Remove `ewe.use_expression`.
+- Adjust types & functions to follow responsibilities of a web server, completely excluding potential framework-like features. 
 - Improve validation of `upgrade` header when upgrading to WebSocket connection.
+- Remove internal `information` actor for retrieving server information.
+- Improve documentation.
+- Expand files response body with optional size limit and offset.
 
 # v0.10.0
 

@@ -47,7 +47,7 @@ pub type ResponseBody {
   StringTreeData(StringTree)
 
   ChunkedData(yielder.Yielder(BitArray))
-  File(descriptor: file.IoDevice, size: Int)
+  File(descriptor: file.IoDevice, offset: Int, size: Int)
 
   WebsocketConnection(Selector(process.Down))
 

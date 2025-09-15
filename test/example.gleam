@@ -16,12 +16,14 @@ pub fn main() {
   let assert Ok(started) = process_registry()
   let registry = started.data
 
+  let on_crash =
+    "Something went wrong, try again later"
+    |> ewe.TextData
+    |> response.set_body(response.new(500), _)
+
   let assert Ok(_) =
     ewe.new(handler(_, registry))
-    |> ewe.on_crash(ewe.text(
-      response.new(500),
-      "Something went wrong, try again later",
-    ))
+    |> ewe.on_crash(on_crash)
     |> ewe.bind_all()
     |> ewe.listening(port: 4000)
     |> ewe.start()
@@ -31,7 +33,11 @@ pub fn main() {
 
 fn handler(req: Request, registry: Subject(ProcessRegistryMessage)) -> Response {
   case request.path_segments(req) {
-    ["hello", name] -> ewe.text(response.new(200), "Hello, " <> name <> "!")
+    ["hello", name] -> {
+      { "Hello, " <> name <> "!" }
+      |> ewe.TextData
+      |> response.set_body(response.new(200), _)
+    }
     ["echo"] -> handle_echo(req, None)
     ["stream", sized] -> handle_echo(req, Some(sized))
     ["ws"] ->
@@ -52,9 +58,15 @@ fn handler(req: Request, registry: Subject(ProcessRegistryMessage)) -> Response 
       )
     ["ws", "announce", text] -> {
       announce(registry, text)
-      ewe.empty(response.new(200))
+
+      response.new(200)
+      |> response.set_body(ewe.Empty)
     }
-    _ -> ewe.text(response.new(404), "Unknown endpoint")
+    _ -> {
+      "Unknown endpoint"
+      |> ewe.TextData
+      |> response.set_body(response.new(404), _)
+    }
   }
 }
 
@@ -82,21 +94,26 @@ fn handle_echo(req: Request, stream: Option(String)) -> Response {
     request.get_header(req, "content-type")
     |> result.unwrap("text/plain")
 
-  let invalid_body = ewe.text(response.new(400), "Invalid request")
+  let invalid_body =
+    "Invalid request"
+    |> ewe.TextData
+    |> response.set_body(response.new(400), _)
 
   case option.map(stream, int.parse) {
     Some(Ok(size)) -> {
       let assert Ok(consumer) = ewe.stream_body(req)
 
-      response.new(200)
-      |> ewe.chunked(yielder.unfold(consumer, consume_body(size)))
+      yielder.unfold(consumer, consume_body(size))
+      |> ewe.ChunkedData
+      |> response.set_body(response.new(200), _)
       |> response.set_header("content-type", content_type)
     }
     Some(Error(_)) -> invalid_body
     None -> {
       case ewe.read_body(req, 1024) {
         Ok(req) ->
-          ewe.bits(response.new(200), req.body)
+          ewe.BitsData(req.body)
+          |> response.set_body(response.new(200), _)
           |> response.set_header("content-type", content_type)
         Error(_) -> invalid_body
       }

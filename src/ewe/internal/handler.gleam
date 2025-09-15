@@ -7,6 +7,7 @@ import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response, Response}
+import gleam/int
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/yielder.{type Yielder}
@@ -136,7 +137,8 @@ fn call_handler(
     }
     Response(body:, ..) -> {
       let sent = case body {
-        File(descriptor, size) -> handle_resp_file(req, resp, descriptor, size)
+        File(descriptor, offset, size) ->
+          handle_resp_file(req, resp, descriptor, offset, size)
         ChunkedData(yielder) -> handle_resp_chunked(req, resp, yielder)
         _ -> handle_resp_body(req, resp, body)
       }
@@ -161,9 +163,16 @@ fn handle_resp_file(
   req: Request(Connection),
   resp: Response(ResponseBody),
   descriptor: file.IoDevice,
+  offset: Int,
   size: Int,
 ) -> Result(Nil, glisten.SocketReason) {
   let assert option.Some(http_version) = req.body.http_version
+
+  let resp = case response.get_header(resp, "content-length") {
+    Ok(_) -> resp
+    Error(Nil) ->
+      response.set_header(resp, "content-length", int.to_string(size))
+  }
 
   let sent =
     response.set_body(resp, bytes_tree.new())
@@ -171,7 +180,7 @@ fn handle_resp_file(
     |> encoder.setup_encoded_response()
     |> transport.send(req.body.transport, req.body.socket, _)
     |> result.try(fn(_) {
-      file.send(req.body.transport, req.body.socket, descriptor, size)
+      file.send(req.body.transport, req.body.socket, descriptor, offset, size)
       |> result.replace_error(socket.Badarg)
     })
 
@@ -187,6 +196,13 @@ fn handle_resp_chunked(
   yielder: Yielder(BitArray),
 ) -> Result(Nil, glisten.SocketReason) {
   let assert option.Some(http_version) = req.body.http_version
+
+  let resp = case response.get_header(resp, "transfer-encoding") {
+    Ok("chunked") -> resp
+    // TODO: handle this?
+    Ok(_) -> resp
+    Error(_) -> response.set_header(resp, "transfer-encoding", "chunked")
+  }
 
   response.set_body(resp, bytes_tree.new())
   |> http_.append_default_headers(req, http_version)

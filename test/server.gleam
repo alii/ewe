@@ -10,7 +10,12 @@ import gleam/string
 import ewe
 
 pub fn hi() {
-  ewe.new(fn(_req) { response.new(200) |> ewe.text("hi") })
+  ewe.new(fn(_req) {
+    "hi"
+    |> ewe.TextData
+    |> response.set_body(response.new(200), _)
+    |> response.set_header("content-type", "text/plain; charset=utf-8")
+  })
 }
 
 pub fn echoer() {
@@ -21,11 +26,11 @@ pub fn echoer() {
 
     case ewe.read_body(req, 1024) {
       Ok(req) -> {
-        response.new(200)
-        |> ewe.bits(req.body)
+        ewe.BitsData(req.body)
+        |> response.set_body(response.new(200), _)
         |> response.set_header("content-type", content_type)
       }
-      Error(_) -> ewe.empty(response.new(400))
+      Error(_) -> response.new(400) |> response.set_body(ewe.Empty)
     }
   })
 }
@@ -34,14 +39,12 @@ pub fn start(builder: ewe.Builder) {
   let name = process.new_name("ewe_test_server")
 
   let _ =
-    ewe.set_information_name(builder, name)
+    ewe.with_name(builder, name)
     |> ewe.listening_random()
     |> ewe.quiet()
     |> ewe.start()
 
-  let assert Ok(server_info) = ewe.get_server_info(name)
-
-  server_info
+  ewe.get_server_info(name)
 }
 
 pub type HttpResponse {
