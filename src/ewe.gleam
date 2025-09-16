@@ -103,10 +103,10 @@ import glisten/transport
 // TODO: replace this once gramps changes are published
 import ewe/internal/gramps/websocket as ws
 
-import ewe/internal/file as file_
-import ewe/internal/handler as handler_
-import ewe/internal/http as http_
-import ewe/internal/websocket as websocket_
+import ewe/internal/file
+import ewe/internal/handler
+import ewe/internal/http as ewe_http
+import ewe/internal/websocket as ewe_ws
 
 // -----------------------------------------------------------------------------
 // CONNECTION
@@ -117,7 +117,7 @@ import ewe/internal/websocket as websocket_
 /// information. Can be converted to a `BitArray` using `ewe.read_body`.
 ///
 pub type Connection =
-  http_.Connection
+  ewe_http.Connection
 
 // -----------------------------------------------------------------------------
 // IP ADDRESS
@@ -236,7 +236,7 @@ pub type ResponseBody {
   /// Allows to set response body from a file more efficiently rather than
   /// sending contents in regular data types.
   /// 
-  File(descriptor: file_.IoDevice, offset: Int, size: Int)
+  File(descriptor: file.IoDevice, offset: Int, size: Int)
 
   /// Allows upgrading request to a WebSocket connection.
   /// 
@@ -256,20 +256,22 @@ pub type MonitorSelector {
 pub type Response =
   HttpResponse(ResponseBody)
 
-fn transform_response_body(resp: Response) -> HttpResponse(http_.ResponseBody) {
+fn transform_response_body(
+  resp: Response,
+) -> HttpResponse(ewe_http.ResponseBody) {
   response.set_body(resp, case resp.body {
-    TextData(text) -> http_.TextData(text)
-    BytesData(bytes) -> http_.BytesData(bytes)
-    BitsData(bits) -> http_.BitsData(bits)
-    StringTreeData(string_tree) -> http_.StringTreeData(string_tree)
+    TextData(text) -> ewe_http.TextData(text)
+    BytesData(bytes) -> ewe_http.BytesData(bytes)
+    BitsData(bits) -> ewe_http.BitsData(bits)
+    StringTreeData(string_tree) -> ewe_http.StringTreeData(string_tree)
 
-    ChunkedData(yielder) -> http_.ChunkedData(yielder)
-    File(descriptor, offset, size) -> http_.File(descriptor, offset, size)
+    ChunkedData(yielder) -> ewe_http.ChunkedData(yielder)
+    File(descriptor, offset, size) -> ewe_http.File(descriptor, offset, size)
 
     WebsocketConnection(MonitorSelector(selector)) ->
-      http_.WebsocketConnection(selector)
+      ewe_http.WebsocketConnection(selector)
 
-    Empty -> http_.Empty
+    Empty -> ewe_http.Empty
   })
 }
 
@@ -291,12 +293,12 @@ pub type FileError {
   UnknownFileError(dynamic.Dynamic)
 }
 
-fn internal_to_file_error(error: file_.FileError) -> FileError {
+fn internal_to_file_error(error: file.FileError) -> FileError {
   case error {
-    file_.Enoent -> NoEntry
-    file_.Eacces -> NoAccess
-    file_.Eisdir -> IsDirectory
-    file_.Eunknown(error) -> UnknownFileError(error)
+    file.Enoent -> NoEntry
+    file.Eacces -> NoAccess
+    file.Eisdir -> IsDirectory
+    file.Eunknown(error) -> UnknownFileError(error)
   }
 }
 
@@ -308,7 +310,7 @@ pub fn file(
   limit limit: Option(Int),
 ) -> Result(ResponseBody, FileError) {
   // TODO: handle invalid offset + limit?
-  case file_.open(path) {
+  case file.open(path) {
     Ok(file) ->
       Ok(File(
         file.descriptor,
@@ -435,12 +437,12 @@ pub fn enable_tls(
   certificate_file certificate_file: String,
   key_file key_file: String,
 ) -> Builder {
-  let cert = case file_.open(certificate_file) {
+  let cert = case file.open(certificate_file) {
     Ok(_) -> certificate_file
     Error(_) -> panic as "Failed to find cert file"
   }
 
-  let key = case file_.open(key_file) {
+  let key = case file.open(key_file) {
     Ok(_) -> key_file
     Error(_) -> panic as "Failed to find key file"
   }
@@ -503,8 +505,8 @@ pub fn start(
 
   let glisten_supervisor =
     glisten.new(
-      handler_.init,
-      handler_.loop(handler, on_crash, builder.idle_timeout),
+      handler.init,
+      handler.loop(handler, on_crash, builder.idle_timeout),
     )
     |> glisten.bind(builder.interface)
     |> fn(glisten_builder) {
@@ -583,9 +585,9 @@ pub fn read_body(
   req: Request,
   bytes_limit bytes_limit: Int,
 ) -> Result(HttpRequest(BitArray), BodyError) {
-  case http_.read_body(req, bytes_limit) {
+  case ewe_http.read_body(req, bytes_limit) {
     Ok(req) -> Ok(req)
-    Error(http_.BodyTooLarge) -> Error(BodyTooLarge)
+    Error(ewe_http.BodyTooLarge) -> Error(BodyTooLarge)
     Error(_) -> Error(InvalidBody)
   }
 }
@@ -611,19 +613,19 @@ pub type Stream {
 /// request body stream.
 /// 
 pub fn stream_body(req: Request) -> Result(Consumer, BodyError) {
-  case http_.stream_body(req) {
+  case ewe_http.stream_body(req) {
     Ok(consumer) -> Ok(consumer_adapter(consumer))
     Error(_) -> Error(InvalidBody)
   }
 }
 
 fn consumer_adapter(
-  internal_consumer: fn(Int) -> Result(http_.Stream, http_.ParseError),
+  internal_consumer: fn(Int) -> Result(ewe_http.Stream, ewe_http.ParseError),
 ) -> Consumer {
   fn(size) {
     case internal_consumer(size) {
-      Ok(http_.Done) -> Ok(Done)
-      Ok(http_.Consumed(data, next)) -> {
+      Ok(ewe_http.Done) -> Ok(Done)
+      Ok(ewe_http.Consumed(data, next)) -> {
         Ok(Consumed(data, consumer_adapter(next)))
       }
       Error(_) -> Error(InvalidBody)
@@ -638,7 +640,7 @@ fn consumer_adapter(
 /// Represents a WebSocket connection between a client and a server.
 /// 
 pub type WebsocketConnection =
-  websocket_.WebsocketConnection
+  ewe_ws.WebsocketConnection
 
 /// Represents an instruction on how WebSocket connection should proceed.
 /// 
@@ -684,11 +686,11 @@ pub fn stop_abnormal(reason: String) -> Next(user_state, user_message) {
 
 fn to_internal_next(
   next: Next(user_state, user_message),
-) -> websocket_.WebsocketNext(user_state, user_message) {
+) -> ewe_ws.WebsocketNext(user_state, user_message) {
   case next {
-    Continue(user_state, selector) -> websocket_.Continue(user_state, selector)
-    NormalStop -> websocket_.NormalStop
-    AbnormalStop(reason) -> websocket_.AbnormalStop(reason)
+    Continue(user_state, selector) -> ewe_ws.Continue(user_state, selector)
+    NormalStop -> ewe_ws.NormalStop
+    AbnormalStop(reason) -> ewe_ws.AbnormalStop(reason)
   }
 }
 
@@ -707,11 +709,11 @@ pub type WebsocketMessage(user_message) {
 }
 
 fn transform_websocket_message(
-  message: websocket_.WebsocketMessage(user_message),
+  message: ewe_ws.WebsocketMessage(user_message),
 ) -> Result(WebsocketMessage(user_message), Nil) {
   // NOTE: see "https://github.com/rawhat/gramps/pull/7"
   case message {
-    websocket_.WebsocketFrame(ws.Data(frame)) -> {
+    ewe_ws.WebsocketFrame(ws.Data(frame)) -> {
       ws.match_data_frame(
         frame,
         on_text: fn(payload, _) {
@@ -720,7 +722,7 @@ fn transform_websocket_message(
         on_binary: fn(payload, _) { Ok(Binary(payload)) },
       )
     }
-    websocket_.UserMessage(user_message) -> Ok(User(user_message))
+    ewe_ws.UserMessage(user_message) -> Ok(User(user_message))
     _ -> Error(Nil)
   }
 }
@@ -762,12 +764,12 @@ pub fn upgrade_websocket(
 
   let resp = {
     use #(extensions, permessage_deflate) <- result.try(
-      http_.upgrade_websocket(req, transport, socket)
+      ewe_http.upgrade_websocket(req, transport, socket)
       |> result.replace_error(response.new(400) |> response.set_body(Empty)),
     )
 
     use selector <- result.try(
-      websocket_.start(
+      ewe_ws.start(
         transport,
         socket,
         on_init,
@@ -793,7 +795,7 @@ pub fn send_binary_frame(
   conn: WebsocketConnection,
   bits: BitArray,
 ) -> Result(Nil, glisten.SocketReason) {
-  websocket_.send_frame(
+  ewe_ws.send_frame(
     ws.encode_binary_frame,
     conn.transport,
     conn.socket,
@@ -808,7 +810,7 @@ pub fn send_text_frame(
   conn: WebsocketConnection,
   text: String,
 ) -> Result(Nil, glisten.SocketReason) {
-  websocket_.send_frame(
+  ewe_ws.send_frame(
     ws.encode_text_frame,
     conn.transport,
     conn.socket,

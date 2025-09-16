@@ -1,3 +1,5 @@
+// TODO: include file serving handler
+
 import gleam/bit_array
 import gleam/erlang/process.{type Subject}
 import gleam/http/request

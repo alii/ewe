@@ -1,5 +1,9 @@
 # Changelog
 
+# Unreleased
+
+- Rename internal imports
+
 # v1.0.0-rc1
 
 - Adjust types & functions to follow responsibilities of a web server, completely excluding potential framework-like features. 
