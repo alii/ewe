@@ -146,29 +146,29 @@ fn handle_websocket(
   conn: ewe.WebsocketConnection,
   state: Nil,
   msg: ewe.WebsocketMessage(Broadcast),
-) -> ewe.Next(Nil, Broadcast) {
+) -> ewe.WebsocketNext(Nil, Broadcast) {
   case msg {
     ewe.Text("Ping") -> {
       let _ = ewe.send_text_frame(conn, "Pong")
-      ewe.continue(state)
+      ewe.websocket_continue(state)
     }
-    ewe.Text("Exit") -> ewe.stop()
+    ewe.Text("Exit") -> ewe.websocket_stop()
 
     // Handle broadcast messages from registry
     ewe.User(Announcement(text)) -> {
       let _ = ewe.send_text_frame(conn, "Announcement: " <> text)
-      ewe.continue(state)
+      ewe.websocket_continue(state)
     }
 
     // Echo binary frames back to client
     ewe.Binary(binary) -> {
       let _ = ewe.send_binary_frame(conn, binary)
-      ewe.continue(state)
+      ewe.websocket_continue(state)
     }
     // Echo text frames back to client
     ewe.Text(text) -> {
       let _ = ewe.send_text_frame(conn, text)
-      ewe.continue(state)
+      ewe.websocket_continue(state)
     }
   }
 }

@@ -19,13 +19,13 @@ pub fn main() -> Nil {
           case msg {
             ewe.Text(text_frame) -> {
               let _ = ewe.send_text_frame(conn, text_frame)
-              ewe.continue(state)
+              ewe.websocket_continue(state)
             }
             ewe.Binary(binary_frame) -> {
               let _ = ewe.send_binary_frame(conn, binary_frame)
-              ewe.continue(state)
+              ewe.websocket_continue(state)
             }
-            _ -> ewe.continue(state)
+            _ -> ewe.websocket_continue(state)
           }
         },
         on_close: fn(_conn, _state) { Nil },
