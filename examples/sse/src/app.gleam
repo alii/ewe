@@ -35,8 +35,8 @@ fn handle_pubsub_message(clients: List(Subject(String)), message: PubSubMessage)
     Unsubscribe(client) -> {
       let assert Ok(pid) = process.subject_owner(client)
 
-      let message = "Client " <> pid_to_string(pid) <> " disconnected"
-      logging.log(logging.Info, message)
+      { "Client " <> pid_to_string(pid) <> " disconnected" }
+      |> logging.log(logging.Info, _)
 
       list.filter(clients, fn(subscribed) { subscribed != client })
       |> actor.continue()
@@ -52,8 +52,8 @@ fn handle_pubsub_message(clients: List(Subject(String)), message: PubSubMessage)
         })
         |> string.join(", ")
 
-      let message = "Sent message `" <> message <> "` to clients: " <> pids
-      logging.log(logging.Info, message)
+      { "Sent message `" <> message <> "` to clients: " <> pids }
+      |> logging.log(logging.Info, _)
 
       actor.continue(clients)
     }
