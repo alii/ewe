@@ -69,10 +69,20 @@
 //// - [upgrade_websocket](#upgrade_websocket)
 //// - [send_binary_frame](#send_binary_frame)
 //// - [send_text_frame](#send_text_frame)
-//// - [continue](#continue)
-//// - [continue_with_selector](#continue_with_selector)
-//// - [stop](#stop)
-//// - [stop_abnormal](#stop_abnormal)
+//// - [websocket_continue](#websocket_continue)
+//// - [websocket_continue_with_selector](#websocket_continue_with_selector)
+//// - [websocket_stop](#websocket_stop)
+//// - [websocket_stop_abnormal](#websocket_stop_abnormal)
+//// #### Server-Sent Events
+//// - [sse](#sse)
+//// - [event](#event)
+//// - [event_name](#event_name)
+//// - [event_id](#event_id)
+//// - [event_retry](#event_retry)
+//// - [send_event](#send_event)
+//// - [sse_continue](#sse_continue)
+//// - [sse_stop](#sse_stop)
+//// - [sse_stop_abnormal](#sse_stop_abnormal)
 
 // -----------------------------------------------------------------------------
 // IMPORTS
@@ -201,8 +211,6 @@ pub fn get_server_info(
 // RESPONSE
 // -----------------------------------------------------------------------------
 
-// TODO: docs on SSE
-
 /// Represents possible response body options.
 ///
 /// Types for direct usage:
@@ -214,6 +222,8 @@ pub fn get_server_info(
 /// - `File`: see `ewe.file` to construct it.
 /// - `WebsocketConnection`: used in `ewe.upgrade_websocket` for correct
 /// WebSocket connection handling.
+/// - `SSEConnection`: used in `ewe.sse` for correct
+/// Server-Sent Events connection handling.
 ///
 pub type ResponseBody {
   /// Allows to set response body from a string.
@@ -244,11 +254,13 @@ pub type ResponseBody {
   /// Allows upgrading request to a WebSocket connection.
   ///
   Websocket(MonitorSelector)
+  /// Allows upgrading request to a Server-Sent Events connection.
+  ///
   SSE(MonitorSelector)
 }
 
-/// Used to monitor a WebSocket connection. Use `MonitorSelector` only when you
-/// know what you are doing.
+/// Used to monitor different types of connections. This type can be used for
+/// frameworks to create wrappings for different types of connections.
 ///
 @internal
 pub type MonitorSelector {
@@ -828,25 +840,38 @@ pub fn send_text_frame(
 // SERVER-SENT EVENT
 // -----------------------------------------------------------------------------
 
-// TODO: docs
-
+/// Represents a Server-Sent Events connection between a client and a server.
+///
 pub type SSEConnection =
   ewe_sse.SSEConnection
 
+/// Represents an instruction on how Server-Sent Events connection should
+/// proceed.
+///
+/// - continue processing the Server-Sent Events connection.
+/// - stop the Server-Sent Events connection.
+/// - stop the Server-Sent Events connection with abnormal reason.
+///
 pub opaque type SSENext(user_state) {
   SSEContinue(user_state)
   SSENormalStop
   SSEAbnormalStop(reason: String)
 }
 
+/// Instructs Server-Sent Events connection to continue processing.
+///
 pub fn sse_continue(user_state: user_state) -> SSENext(user_state) {
   SSEContinue(user_state)
 }
 
+/// Instructs Server-Sent Events connection to stop.
+///
 pub fn sse_stop() -> SSENext(user_state) {
   SSENormalStop
 }
 
+/// Instructs Server-Sent Events connection to stop with abnormal reason.
+///
 pub fn sse_stop_abnormal(reason: String) -> SSENext(user_state) {
   SSEAbnormalStop(reason)
 }
@@ -861,30 +886,61 @@ fn to_internal_sse_next(
   }
 }
 
+/// Represents a Server-Sent Events event. The event fields are:
+/// - `event`: a string identifying the type of event described.
+/// - `data`: the data field for the message.
+/// - `id`: event ID.
+/// - `retry`: The reconnection time. If the connection to the server is lost,
+/// the browser will wait for the specified time before attempting to reconnect.
+/// 
+/// Can be created using `ewe.event` and modified with `ewe.event_name`,
+/// `ewe.event_id`, and `ewe.event_retry`.
+///
 pub type SSEEvent =
   ewe_sse.SSEEvent
 
+/// Creates a new SSE event with the given data. Use `ewe.event_name`,
+/// `ewe.event_id`, and `ewe.event_retry` to modify other fields of the event.
+///
 pub fn event(data: String) -> SSEEvent {
   ewe_sse.SSEEvent(event: None, data:, id: None, retry: None)
 }
 
+/// Sets the name of the event.
+///
 pub fn event_name(event: SSEEvent, name: String) -> SSEEvent {
   ewe_sse.SSEEvent(..event, event: Some(name))
 }
 
+/// Sets the ID of the event.
+///
 pub fn event_id(event: SSEEvent, id: String) -> SSEEvent {
   ewe_sse.SSEEvent(..event, id: Some(id))
 }
 
+/// Sets the retry time of the event.
+///
 pub fn event_retry(event: SSEEvent, retry: Int) -> SSEEvent {
   ewe_sse.SSEEvent(..event, retry: Some(retry))
 }
 
+/// Sets up the connection for Server-Sent Events.
+///
+/// `on_init` function is called once process that handles SSE connection
+/// is initialized. The argument is subject that can be used to send messages
+/// to the client. It must return initial state.
+///
+/// `handler` function is called for every subject's message received. It must
+/// return instruction on how SSE connection should proceed.
+/// 
+/// `on_close` function is called when SSE process is going to be stopped.
+///
 pub fn sse(
   req: Request,
   on_init on_init: fn(Subject(user_message)) -> user_state,
   handler handler: fn(SSEConnection, user_state, user_message) ->
     SSENext(user_state),
+  on_close on_close: fn(SSEConnection, user_state) -> Nil,
 ) {
   let handler = fn(conn, state, msg) {
     handler(conn, state, msg)
@@ -896,7 +952,7 @@ pub fn sse(
 
   case ewe_sse.send_response(transport, socket) {
     Ok(Nil) -> {
-      case ewe_sse.start(transport, socket, on_init, handler) {
+      case ewe_sse.start(transport, socket, on_init, handler, on_close) {
         Ok(selector) -> {
           response.new(200)
           |> response.set_body(SSE(MonitorSelector(selector)))
@@ -908,6 +964,8 @@ pub fn sse(
   }
 }
 
+/// Sends a Server-Sent Events event to the client.
+///
 pub fn send_event(
   conn: SSEConnection,
   event: SSEEvent,

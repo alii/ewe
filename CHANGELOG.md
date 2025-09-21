@@ -3,7 +3,8 @@
 # Unreleased
 
 - Rename internal imports
-- Fix invalid ffi file naming
+- Fix invalid ffi file namings
+- Add support for Server-Sent Events
 
 # v1.0.0-rc1
 

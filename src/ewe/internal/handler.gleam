@@ -2,7 +2,6 @@
 // IMPORTS
 // -----------------------------------------------------------------------------
 import ewe/internal/file
-import ewe/internal/sse
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/erlang/process

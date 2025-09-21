@@ -6,7 +6,7 @@ import gleam/bool
 import gleam/bytes_tree.{type BytesTree}
 import gleam/dict.{type Dict}
 import gleam/erlang/atom
-import gleam/erlang/process.{type Selector, type Subject}
+import gleam/erlang/process.{type Selector}
 import gleam/http
 import gleam/http/request.{type Request, Request}
 import gleam/http/response.{type Response}
@@ -34,7 +34,6 @@ import ewe/internal/decoder.{
 }
 import ewe/internal/encoder
 import ewe/internal/file
-import ewe/internal/sse
 
 // -----------------------------------------------------------------------------
 // TYPES

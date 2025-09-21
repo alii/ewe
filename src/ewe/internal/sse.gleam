@@ -11,6 +11,7 @@ import gleam/otp/actor
 import gleam/result
 import gleam/string_tree
 import glisten/socket.{type Socket}
+import glisten/socket/options.{ActiveMode, Once}
 import glisten/transport.{type Transport}
 
 pub type SSEConnection {
@@ -32,32 +33,19 @@ pub type SSENext(user_state) {
   AbnormalStop(reason: String)
 }
 
-// pub type SSEMessages(user_message) {
-//   User(user_message)
-//   Internal(Internal)
-// }
+pub type SSEMessages(user_message) {
+  User(user_message)
+  Close
+}
 
-// pub type Internal {
-//   SocketClose
-//   Down
-// }
-
-// fn create_socket_selector(
-//   user_subject: Subject(user_message),
-//   internal_subject: Subject(Internal),
-// ) {
-//   process.new_selector()
-//   |> process.select_map(user_subject, fn(msg) { User(msg) })
-//   |> process.select_map(internal_subject, fn(msg) { Internal(msg) })
-//   // Listen for TCP close events
-//   |> process.select_record(atom.create("tcp_closed"), 1, fn(_) {
-//     Internal(SocketClose)
-//   })
-//   // Listen for SSL close events  
-//   |> process.select_record(atom.create("ssl_closed"), 1, fn(_) {
-//     Internal(SocketClose)
-//   })
-// }
+fn create_socket_selector(
+  user_subject: Subject(user_message),
+) -> Selector(SSEMessages(user_message)) {
+  process.new_selector()
+  |> process.select_map(user_subject, fn(msg) { User(msg) })
+  |> process.select_record(atom.create("tcp_closed"), 1, fn(_) { Close })
+  |> process.select_record(atom.create("ssl_closed"), 1, fn(_) { Close })
+}
 
 pub fn send_response(transport: Transport, socket: Socket) -> Result(Nil, Nil) {
   response.new(200)
@@ -74,30 +62,46 @@ pub fn start(
   socket: Socket,
   on_init: fn(Subject(user_message)) -> user_state,
   handler: fn(SSEConnection, user_state, user_message) -> SSENext(user_state),
+  on_close: fn(SSEConnection, user_state) -> Nil,
 ) -> Result(Selector(process.Down), actor.StartError) {
-  actor.new_with_initialiser(1000, fn(subject) {
+  actor.new_with_initialiser(1000, fn(_subject) {
+    let subject = process.new_subject()
     let state = on_init(subject)
+    let selector = create_socket_selector(subject)
 
     actor.initialised(state)
     |> actor.returning(subject)
+    |> actor.selecting(selector)
     |> Ok
   })
   |> actor.on_message(fn(state, message) {
-    case handler(SSEConnection(transport, socket), state, message) {
-      Continue(new_state) -> actor.continue(new_state)
-      NormalStop -> {
-        echo "normal stop :)" as "potential `on_close` callback?"
-        actor.stop()
+    case message {
+      User(message) -> {
+        let conn = SSEConnection(transport, socket)
+        case handler(conn, state, message) {
+          Continue(new_state) -> actor.continue(new_state)
+          NormalStop -> {
+            on_close(conn, state)
+            actor.stop()
+          }
+          AbnormalStop(reason) -> {
+            on_close(conn, state)
+            actor.stop_abnormal(reason)
+          }
+        }
       }
-      AbnormalStop(reason) -> {
-        echo reason as "potential `on_close` callback?"
-        actor.stop_abnormal(reason)
+      Close -> {
+        on_close(SSEConnection(transport, socket), state)
+        actor.stop()
       }
     }
   })
   |> actor.start()
   |> result.map(fn(started) {
     let assert Ok(pid) = process.subject_owner(started.data)
+    let _ = transport.controlling_process(transport, socket, pid)
+
+    set_socket_active(transport, socket)
 
     process.select_specific_monitor(
       process.new_selector(),
@@ -143,4 +147,10 @@ pub fn send_event(
 
 fn format(field: String, value: String) {
   field <> ": " <> value <> "\n"
+}
+
+/// Sets socket to active mode for one message delivery
+fn set_socket_active(transport: Transport, socket: Socket) -> Nil {
+  let _ = transport.set_opts(transport, socket, [ActiveMode(Once)])
+  Nil
 }
