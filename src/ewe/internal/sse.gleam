@@ -32,32 +32,32 @@ pub type SSENext(user_state) {
   AbnormalStop(reason: String)
 }
 
-pub type SSEMessages(user_message) {
-  User(user_message)
-  Internal(Internal)
-}
+// pub type SSEMessages(user_message) {
+//   User(user_message)
+//   Internal(Internal)
+// }
 
-pub type Internal {
-  SocketClose
-  Down
-}
+// pub type Internal {
+//   SocketClose
+//   Down
+// }
 
-fn create_socket_selector(
-  user_subject: Subject(user_message),
-  internal_subject: Subject(Internal),
-) {
-  process.new_selector()
-  |> process.select_map(user_subject, fn(msg) { User(msg) })
-  |> process.select_map(internal_subject, fn(msg) { Internal(msg) })
-  // Listen for TCP close events
-  |> process.select_record(atom.create("tcp_closed"), 1, fn(_) {
-    Internal(SocketClose)
-  })
-  // Listen for SSL close events  
-  |> process.select_record(atom.create("ssl_closed"), 1, fn(_) {
-    Internal(SocketClose)
-  })
-}
+// fn create_socket_selector(
+//   user_subject: Subject(user_message),
+//   internal_subject: Subject(Internal),
+// ) {
+//   process.new_selector()
+//   |> process.select_map(user_subject, fn(msg) { User(msg) })
+//   |> process.select_map(internal_subject, fn(msg) { Internal(msg) })
+//   // Listen for TCP close events
+//   |> process.select_record(atom.create("tcp_closed"), 1, fn(_) {
+//     Internal(SocketClose)
+//   })
+//   // Listen for SSL close events  
+//   |> process.select_record(atom.create("ssl_closed"), 1, fn(_) {
+//     Internal(SocketClose)
+//   })
+// }
 
 pub fn send_response(transport: Transport, socket: Socket) -> Result(Nil, Nil) {
   response.new(200)
@@ -74,40 +74,24 @@ pub fn start(
   socket: Socket,
   on_init: fn(Subject(user_message)) -> user_state,
   handler: fn(SSEConnection, user_state, user_message) -> SSENext(user_state),
-) -> Result(#(Selector(process.Down), Subject(Internal)), actor.StartError) {
-  let internal_subject = process.new_subject()
-
-  actor.new_with_initialiser(1000, fn(_subject) {
-    let subject = process.new_subject()
+) -> Result(Selector(process.Down), actor.StartError) {
+  actor.new_with_initialiser(1000, fn(subject) {
     let state = on_init(subject)
 
     actor.initialised(state)
-    |> actor.selecting(create_socket_selector(subject, internal_subject))
     |> actor.returning(subject)
     |> Ok
   })
   |> actor.on_message(fn(state, message) {
-    case message {
-      User(message) -> {
-        case handler(SSEConnection(transport, socket), state, message) {
-          Continue(new_state) -> actor.continue(new_state)
-          NormalStop -> {
-            echo "normal stop :)" as "potential `on_close` callback?"
-            actor.stop()
-          }
-          AbnormalStop(reason) -> {
-            echo reason as "potential `on_close` callback?"
-            actor.stop_abnormal(reason)
-          }
-        }
-      }
-      Internal(SocketClose) -> {
-        echo "socket close" as "potential `on_close` callback?"
+    case handler(SSEConnection(transport, socket), state, message) {
+      Continue(new_state) -> actor.continue(new_state)
+      NormalStop -> {
+        echo "normal stop :)" as "potential `on_close` callback?"
         actor.stop()
       }
-      Internal(Down) -> {
-        echo "internal stop" as "potential `on_close` callback?"
-        actor.stop()
+      AbnormalStop(reason) -> {
+        echo reason as "potential `on_close` callback?"
+        actor.stop_abnormal(reason)
       }
     }
   })
@@ -115,13 +99,10 @@ pub fn start(
   |> result.map(fn(started) {
     let assert Ok(pid) = process.subject_owner(started.data)
 
-    #(
-      process.select_specific_monitor(
-        process.new_selector(),
-        process.monitor(pid),
-        function.identity,
-      ),
-      internal_subject,
+    process.select_specific_monitor(
+      process.new_selector(),
+      process.monitor(pid),
+      function.identity,
     )
   })
 }

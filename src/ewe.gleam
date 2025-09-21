@@ -244,7 +244,7 @@ pub type ResponseBody {
   /// Allows upgrading request to a WebSocket connection.
   ///
   Websocket(MonitorSelector)
-  SSE(MonitorSelector, Subject(ewe_sse.Internal))
+  SSE(MonitorSelector)
 }
 
 /// Used to monitor a WebSocket connection. Use `MonitorSelector` only when you
@@ -273,8 +273,7 @@ fn transform_response_body(
     File(descriptor, offset, size) -> ewe_http.File(descriptor, offset, size)
 
     Websocket(MonitorSelector(selector)) -> ewe_http.Websocket(selector)
-    SSE(MonitorSelector(selector), internal_subject) ->
-      ewe_http.SSE(selector, internal_subject)
+    SSE(MonitorSelector(selector)) -> ewe_http.SSE(selector)
 
     Empty -> ewe_http.Empty
   })
@@ -898,9 +897,9 @@ pub fn sse(
   case ewe_sse.send_response(transport, socket) {
     Ok(Nil) -> {
       case ewe_sse.start(transport, socket, on_init, handler) {
-        Ok(#(selector, internal_subject)) -> {
+        Ok(selector) -> {
           response.new(200)
-          |> response.set_body(SSE(MonitorSelector(selector), internal_subject))
+          |> response.set_body(SSE(MonitorSelector(selector)))
         }
         Error(_) -> response.new(400) |> response.set_body(Empty)
       }

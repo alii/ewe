@@ -51,7 +51,7 @@ pub type ResponseBody {
   File(descriptor: file.IoDevice, offset: Int, size: Int)
 
   Websocket(Selector(process.Down))
-  SSE(Selector(process.Down), Subject(sse.Internal))
+  SSE(Selector(process.Down))
 
   Empty
 }
