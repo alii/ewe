@@ -1,5 +1,6 @@
 import ewe/internal/encoder
 import gleam/bytes_tree
+import gleam/erlang/atom
 import gleam/erlang/process.{type Selector, type Subject}
 import gleam/function
 import gleam/http/response
@@ -37,7 +38,25 @@ pub type SSEMessages(user_message) {
 }
 
 pub type Internal {
+  SocketClose
   Down
+}
+
+fn create_socket_selector(
+  user_subject: Subject(user_message),
+  internal_subject: Subject(Internal),
+) {
+  process.new_selector()
+  |> process.select_map(user_subject, fn(msg) { User(msg) })
+  |> process.select_map(internal_subject, fn(msg) { Internal(msg) })
+  // Listen for TCP close events
+  |> process.select_record(atom.create("tcp_closed"), 1, fn(_) {
+    Internal(SocketClose)
+  })
+  // Listen for SSL close events  
+  |> process.select_record(atom.create("ssl_closed"), 1, fn(_) {
+    Internal(SocketClose)
+  })
 }
 
 pub fn send_response(transport: Transport, socket: Socket) -> Result(Nil, Nil) {
@@ -62,15 +81,8 @@ pub fn start(
     let subject = process.new_subject()
     let state = on_init(subject)
 
-    let selector =
-      process.new_selector()
-      |> process.select_map(subject, fn(user_message) { User(user_message) })
-      |> process.select_map(internal_subject, fn(internal_message) {
-        Internal(internal_message)
-      })
-
     actor.initialised(state)
-    |> actor.selecting(selector)
+    |> actor.selecting(create_socket_selector(subject, internal_subject))
     |> actor.returning(subject)
     |> Ok
   })
@@ -88,6 +100,10 @@ pub fn start(
             actor.stop_abnormal(reason)
           }
         }
+      }
+      Internal(SocketClose) -> {
+        echo "socket close" as "potential `on_close` callback?"
+        actor.stop()
       }
       Internal(Down) -> {
         echo "internal stop" as "potential `on_close` callback?"
