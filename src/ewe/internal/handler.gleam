@@ -21,7 +21,7 @@ import ewe/internal/encoder
 import ewe/internal/exception
 import ewe/internal/http.{
   type Connection, type ResponseBody, BitsData, BytesData, ChunkedData, Empty,
-  File, StringTreeData, TextData, WebsocketConnection,
+  File, SSE, StringTreeData, TextData, Websocket,
 } as http_
 
 // -----------------------------------------------------------------------------
@@ -131,7 +131,7 @@ fn call_handler(
     |> result.unwrap_both()
 
   case resp {
-    Response(body: WebsocketConnection(selector), ..) -> {
+    Response(body: Websocket(selector), ..) | Response(body: SSE(selector), ..) -> {
       let _ = process.selector_receive_forever(selector)
       Stop
     }

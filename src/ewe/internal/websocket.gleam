@@ -548,12 +548,9 @@ fn after_start(
 
   set_socket_active_once(transport, socket)
 
-  let selector =
-    process.select_specific_monitor(
-      process.new_selector(),
-      process.monitor(pid),
-      function.identity,
-    )
-
-  selector
+  process.select_specific_monitor(
+    process.new_selector(),
+    process.monitor(pid),
+    function.identity,
+  )
 }

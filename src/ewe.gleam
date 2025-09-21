@@ -81,7 +81,7 @@
 import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
 import gleam/dynamic
-import gleam/erlang/process.{type Selector}
+import gleam/erlang/process.{type Selector, type Subject}
 import gleam/http
 import gleam/http/request.{type Request as HttpRequest}
 import gleam/http/response.{type Response as HttpResponse}
@@ -106,6 +106,7 @@ import ewe/internal/gramps/websocket as ws
 import ewe/internal/file
 import ewe/internal/handler
 import ewe/internal/http as ewe_http
+import ewe/internal/sse as ewe_sse
 import ewe/internal/websocket as ewe_ws
 
 // -----------------------------------------------------------------------------
@@ -124,14 +125,14 @@ pub type Connection =
 // -----------------------------------------------------------------------------
 
 /// Represents an IP address of a client/server.
-/// 
+///
 pub type IpAddress {
   IpV4(Int, Int, Int, Int)
   IpV6(Int, Int, Int, Int, Int, Int, Int, Int)
 }
 
 /// Converts an `IpAddress` to a `String`.
-/// 
+///
 pub fn ip_address_to_string(address address: IpAddress) -> String {
   ewe_to_glisten_ip(address)
   |> glisten.ip_address_to_string()
@@ -167,14 +168,14 @@ fn ewe_to_glisten_ip(ip: IpAddress) -> glisten.IpAddress {
 
 /// Represents client/server information. Can be retrieved using
 /// `ewe.get_client_info`/`ewe.get_server_info`.
-/// 
+///
 pub type SocketAddress {
   SocketAddress(ip: IpAddress, port: Int)
 }
 
 /// Attempts to get the client's socket address using request's
 /// connection.
-/// 
+///
 pub fn get_client_info(
   connection connection: Connection,
 ) -> Result(SocketAddress, Nil) {
@@ -186,7 +187,7 @@ pub fn get_client_info(
 
 /// Retrieves server's socket address. Requires the same name as the one used in
 /// `ewe.with_name` and server to be started.
-/// 
+///
 pub fn get_server_info(
   listener_name name: process.Name(listener.Message),
 ) -> SocketAddress {
@@ -200,59 +201,63 @@ pub fn get_server_info(
 // RESPONSE
 // -----------------------------------------------------------------------------
 
+// TODO: docs on SSE
+
 /// Represents possible response body options.
-/// 
+///
 /// Types for direct usage:
 /// - Regular data: `TextData`, `BytesData`, `BitsData`, `StringTreeData`,
 ///   `Empty`
 /// - Chunked data: `ChunkedData`
-/// 
+///
 /// Types that should not be used directly:
 /// - `File`: see `ewe.file` to construct it.
 /// - `WebsocketConnection`: used in `ewe.upgrade_websocket` for correct
 /// WebSocket connection handling.
-/// 
+///
 pub type ResponseBody {
   /// Allows to set response body from a string.
-  /// 
+  ///
   TextData(String)
   /// Allows to set response body from bytes.
-  /// 
+  ///
   BytesData(BytesTree)
   /// Allows to set response body from bits.
-  /// 
+  ///
   BitsData(BitArray)
   /// Allows to set response body from a string tree.
-  /// 
+  ///
   StringTreeData(StringTree)
   /// Allows to set empty response body.
-  /// 
+  ///
   Empty
 
   /// Allows to send response body in chunks with `chunked` transfer encoding.
-  /// 
+  ///
   ChunkedData(yielder.Yielder(BitArray))
 
   /// Allows to set response body from a file more efficiently rather than
   /// sending contents in regular data types.
-  /// 
+  ///
   File(descriptor: file.IoDevice, offset: Int, size: Int)
 
   /// Allows upgrading request to a WebSocket connection.
-  /// 
-  WebsocketConnection(MonitorSelector)
+  ///
+  Websocket(MonitorSelector)
+
+  SSE(MonitorSelector)
 }
 
 /// Used to monitor a WebSocket connection. Use `MonitorSelector` only when you
 /// know what you are doing.
-/// 
+///
 @internal
 pub type MonitorSelector {
   MonitorSelector(Selector(process.Down))
 }
 
 /// A convenient alias for a HTTP response with a `ResponseBody` as the body.
-/// 
+///
 pub type Response =
   HttpResponse(ResponseBody)
 
@@ -268,28 +273,28 @@ fn transform_response_body(
     ChunkedData(yielder) -> ewe_http.ChunkedData(yielder)
     File(descriptor, offset, size) -> ewe_http.File(descriptor, offset, size)
 
-    WebsocketConnection(MonitorSelector(selector)) ->
-      ewe_http.WebsocketConnection(selector)
+    Websocket(MonitorSelector(selector)) -> ewe_http.Websocket(selector)
+    SSE(MonitorSelector(selector)) -> ewe_http.SSE(selector)
 
     Empty -> ewe_http.Empty
   })
 }
 
 /// Possible errors that can occur when setting response body from a file.
-/// 
+///
 pub type FileError {
   /// File does not exist.
-  /// 
+  ///
   NoEntry
   /// Missing permission for reading the file, or for searching one of the
   /// parents directories.
-  /// 
+  ///
   NoAccess
   /// The named file is a directory.
-  /// 
+  ///
   IsDirectory
   /// Untypical file error.
-  /// 
+  ///
   UnknownFileError(dynamic.Dynamic)
 }
 
@@ -303,7 +308,7 @@ fn internal_to_file_error(error: file.FileError) -> FileError {
 }
 
 /// Sets response body from file, sets `content-length` header.
-/// 
+///
 pub fn file(
   path: String,
   offset offset: Option(Int),
@@ -344,7 +349,7 @@ type OnStart =
 /// - `ewe.quiet`
 /// - `ewe.on_crash`
 /// - `ewe.idle_timeout`
-/// 
+///
 pub opaque type Builder {
   Builder(
     handler: Handler,
@@ -360,7 +365,7 @@ pub opaque type Builder {
 }
 
 /// Creates new server builder with handler provided.
-/// 
+///
 /// Default configuration:
 /// - port: `8080`
 /// - interface: `127.0.0.1`
@@ -370,7 +375,7 @@ pub opaque type Builder {
 /// - on_start: prints `Listening on <scheme>://<ip_address>:<port>`
 /// - on_crash: empty 500 response
 /// - idle_timeout: connection is closed after 10_000ms of inactivity
-/// 
+///
 pub fn new(handler: Handler) -> Builder {
   Builder(
     handler:,
@@ -399,39 +404,39 @@ pub fn new(handler: Handler) -> Builder {
   )
 }
 
-/// Binds server to a specific interface. Crashes program if the interface is 
+/// Binds server to a specific interface. Crashes program if the interface is
 /// invalid.
-/// 
+///
 pub fn bind(builder: Builder, interface interface: String) -> Builder {
   Builder(..builder, interface:)
 }
 
 /// Binds server to all interfaces.
-/// 
+///
 pub fn bind_all(builder: Builder) -> Builder {
   Builder(..builder, interface: "0.0.0.0")
 }
 
 /// Sets listening port for server.
-/// 
+///
 pub fn listening(builder: Builder, port port: Int) -> Builder {
   Builder(..builder, port:)
 }
 
 /// Sets listening port for server to a random port. Useful for testing.
-/// 
+///
 pub fn listening_random(builder: Builder) -> Builder {
   Builder(..builder, port: 0)
 }
 
 /// Enables IPv6 support.
-/// 
+///
 pub fn enable_ipv6(builder: Builder) -> Builder {
   Builder(..builder, ipv6: True)
 }
 
 /// Enables TLS support, requires certificate and key file.
-/// 
+///
 pub fn enable_tls(
   builder: Builder,
   certificate_file certificate_file: String,
@@ -452,7 +457,7 @@ pub fn enable_tls(
 
 /// Sets a custom process name for server information retrieval, allowing to
 /// use `ewe.get_server_info` after the server starts.
-/// 
+///
 pub fn with_name(
   builder: Builder,
   name: process.Name(listener.Message),
@@ -461,7 +466,7 @@ pub fn with_name(
 }
 
 /// Sets a custom handler that will be called after server starts.
-/// 
+///
 pub fn on_start(
   builder: Builder,
   on_start: fn(http.Scheme, SocketAddress) -> Nil,
@@ -470,20 +475,20 @@ pub fn on_start(
 }
 
 /// Sets an empty `on_start` function.
-/// 
+///
 pub fn quiet(builder: Builder) -> Builder {
   Builder(..builder, on_start: fn(_, _) { Nil })
 }
 
 /// Sets a custom response that will be sent when server crashes.
-/// 
+///
 pub fn on_crash(builder: Builder, on_crash: Response) -> Builder {
   Builder(..builder, on_crash:)
 }
 
 /// Sets a custom idle timeout in milliseconds for connections. If
 /// provided timeout is less than 0, 10_000ms will be used instead.
-/// 
+///
 pub fn idle_timeout(builder: Builder, idle_timeout: Int) -> Builder {
   case idle_timeout {
     idle_timeout if idle_timeout >= 0 -> Builder(..builder, idle_timeout:)
@@ -496,7 +501,7 @@ pub fn idle_timeout(builder: Builder, idle_timeout: Int) -> Builder {
 // -----------------------------------------------------------------------------
 
 /// Starts the server with the provided configuration.
-/// 
+///
 pub fn start(
   builder: Builder,
 ) -> Result(actor.Started(Supervisor), actor.StartError) {
@@ -548,7 +553,7 @@ pub fn start(
 
 /// Creates a supervisor with the provided configuration that is a child of a
 /// supervision tree.
-/// 
+///
 pub fn supervised(
   builder: Builder,
 ) -> supervision.ChildSpecification(supervisor.Supervisor) {
@@ -560,7 +565,7 @@ pub fn supervised(
 // -----------------------------------------------------------------------------
 
 /// Possible errors that can occur when reading a body.
-/// 
+///
 pub type BodyError {
   /// Body is larger than the provided limit.
   BodyTooLarge
@@ -569,18 +574,18 @@ pub type BodyError {
 }
 
 /// A convenient alias for a HTTP request with a `Connection` as the body.
-/// 
+///
 pub type Request =
   HttpRequest(Connection)
 
 /// Reads body from the request. If request body is malformed, `InvalidBody`
 /// error is returned. On success, returns a request with body converted to
 /// `BitArray`.
-/// 
-/// - When `transfer-encoding` header set as `chunked`, `BodyTooLarge` error is 
+///
+/// - When `transfer-encoding` header set as `chunked`, `BodyTooLarge` error is
 /// returned if accumulated body is larger than `size_limit`.
 /// - Ensures that `content-length` is in `size_limit` scope.
-/// 
+///
 pub fn read_body(
   req: Request,
   bytes_limit bytes_limit: Int,
@@ -592,17 +597,17 @@ pub fn read_body(
   }
 }
 
-/// A convenient alias for a consumer that reads `N` amount of bytes from the 
+/// A convenient alias for a consumer that reads `N` amount of bytes from the
 /// request body stream.
-/// 
+///
 pub type Consumer =
   fn(Int) -> Result(Stream, BodyError)
 
 /// Used to track the progress of reading the request body stream.
-/// 
+///
 pub type Stream {
   /// Chunk of data has been consumed.
-  /// 
+  ///
   Consumed(data: BitArray, next: Consumer)
   /// Signifies that the request body stream has been fully consumed.
   ///
@@ -611,7 +616,7 @@ pub type Stream {
 
 /// Returns the consumer function that reads `N` amount of bytes from the
 /// request body stream.
-/// 
+///
 pub fn stream_body(req: Request) -> Result(Consumer, BodyError) {
   case ewe_http.stream_body(req) {
     Ok(consumer) -> Ok(consumer_adapter(consumer))
@@ -638,73 +643,78 @@ fn consumer_adapter(
 // -----------------------------------------------------------------------------
 
 /// Represents a WebSocket connection between a client and a server.
-/// 
+///
 pub type WebsocketConnection =
   ewe_ws.WebsocketConnection
 
 /// Represents an instruction on how WebSocket connection should proceed.
-/// 
+///
 /// - continue processing the WebSocket connection.
 /// - continue processing the WebSocket connection with selector for custom
 ///   messages.
 /// - stop the WebSocket connection.
 /// - stop the WebSocket connection with abnormal reason.
-/// 
-pub opaque type Next(user_state, user_message) {
-  Continue(user_state, Option(Selector(user_message)))
-  NormalStop
-  AbnormalStop(reason: String)
+///
+pub opaque type WebsocketNext(user_state, user_message) {
+  WebsocketContinue(user_state, Option(Selector(user_message)))
+  WebsocketNormalStop
+  WebsocketAbnormalStop(reason: String)
 }
 
 /// Instructs WebSocket connection to continue processing.
-/// 
-pub fn continue(user_state: user_state) -> Next(user_state, user_message) {
-  Continue(user_state, None)
+///
+pub fn websocket_continue(
+  user_state: user_state,
+) -> WebsocketNext(user_state, user_message) {
+  WebsocketContinue(user_state, None)
 }
 
 /// Instructs WebSocket connection to continue processing, including selector
 /// for custom messages.
-/// 
-pub fn continue_with_selector(
+///
+pub fn websocket_continue_with_selector(
   user_state: user_state,
   selector: Selector(user_message),
-) -> Next(user_state, user_message) {
-  Continue(user_state, Some(selector))
+) -> WebsocketNext(user_state, user_message) {
+  WebsocketContinue(user_state, Some(selector))
 }
 
 /// Instructs WebSocket connection to stop.
-/// 
-pub fn stop() -> Next(user_state, user_message) {
-  NormalStop
+///
+pub fn websocket_stop() -> WebsocketNext(user_state, user_message) {
+  WebsocketNormalStop
 }
 
 /// Instructs WebSocket connection to stop with abnormal reason.
-/// 
-pub fn stop_abnormal(reason: String) -> Next(user_state, user_message) {
-  AbnormalStop(reason)
+///
+pub fn websocket_stop_abnormal(
+  reason: String,
+) -> WebsocketNext(user_state, user_message) {
+  WebsocketAbnormalStop(reason)
 }
 
-fn to_internal_next(
-  next: Next(user_state, user_message),
+fn to_internal_websocket_next(
+  next: WebsocketNext(user_state, user_message),
 ) -> ewe_ws.WebsocketNext(user_state, user_message) {
   case next {
-    Continue(user_state, selector) -> ewe_ws.Continue(user_state, selector)
-    NormalStop -> ewe_ws.NormalStop
-    AbnormalStop(reason) -> ewe_ws.AbnormalStop(reason)
+    WebsocketContinue(user_state, selector) ->
+      ewe_ws.Continue(user_state, selector)
+    WebsocketNormalStop -> ewe_ws.NormalStop
+    WebsocketAbnormalStop(reason) -> ewe_ws.AbnormalStop(reason)
   }
 }
 
 /// Represents a WebSocket message received from the client.
-/// 
+///
 pub type WebsocketMessage(user_message) {
   /// Indicate that text frame has been received.
-  /// 
+  ///
   Text(String)
   /// Indicate that binary frame has been received.
-  /// 
+  ///
   Binary(BitArray)
   /// Indicate that user message has been received from WebSocket selector.
-  /// 
+  ///
   User(user_message)
 }
 
@@ -729,17 +739,17 @@ fn transform_websocket_message(
 
 /// Upgrade request to a WebSocket connection. If the initial request is not
 /// valid for WebSocket upgrade, 400 response is sent.
-/// 
+///
 /// `on_init` function is called once process that handles WebSocket connection
 /// is initialized. It must return a tuple with initial state and selector for
-/// custom messages. If there is no custom messages, user can pass the same 
+/// custom messages. If there is no custom messages, user can pass the same
 /// selector from the argument
-/// 
+///
 /// `handler` function is called for every WebSocket message received. It must
 /// return instruction on how WebSocket connection should proceed.
-/// 
+///
 /// `on_close` function is called when WebSocket process is going to be stopped.
-/// 
+///
 pub fn upgrade_websocket(
   req: Request,
   on_init on_init: fn(WebsocketConnection, Selector(user_message)) ->
@@ -749,48 +759,44 @@ pub fn upgrade_websocket(
     user_state,
     WebsocketMessage(user_message),
   ) ->
-    Next(user_state, user_message),
+    WebsocketNext(user_state, user_message),
   on_close on_close: fn(WebsocketConnection, user_state) -> Nil,
 ) -> Response {
   let handler = fn(conn, state, msg) {
     transform_websocket_message(msg)
     |> result.map(handler(conn, state, _))
-    |> result.unwrap(continue(state))
-    |> to_internal_next()
+    |> result.unwrap(websocket_continue(state))
+    |> to_internal_websocket_next()
   }
 
   let transport = req.body.transport
   let socket = req.body.socket
 
-  let resp = {
-    use #(extensions, permessage_deflate) <- result.try(
-      ewe_http.upgrade_websocket(req, transport, socket)
-      |> result.replace_error(response.new(400) |> response.set_body(Empty)),
-    )
-
-    use selector <- result.try(
-      ewe_ws.start(
-        transport,
-        socket,
-        on_init,
-        handler,
-        on_close,
-        extensions,
-        permessage_deflate,
-      )
-      |> result.replace_error(response.new(500) |> response.set_body(Empty)),
-    )
-
-    response.new(500)
-    |> response.set_body(WebsocketConnection(MonitorSelector(selector)))
-    |> Ok
+  case ewe_http.upgrade_websocket(req, transport, socket) {
+    Ok(#(extensions, permessage_deflate)) -> {
+      let started =
+        ewe_ws.start(
+          transport,
+          socket,
+          on_init,
+          handler,
+          on_close,
+          extensions,
+          permessage_deflate,
+        )
+      case started {
+        Ok(selector) ->
+          response.new(200)
+          |> response.set_body(Websocket(MonitorSelector(selector)))
+        Error(_) -> response.new(500) |> response.set_body(Empty)
+      }
+    }
+    Error(_) -> response.new(400) |> response.set_body(Empty)
   }
-
-  result.unwrap_both(resp)
 }
 
 /// Sends a binary frame to the websocket client.
-/// 
+///
 pub fn send_binary_frame(
   conn: WebsocketConnection,
   bits: BitArray,
@@ -805,7 +811,7 @@ pub fn send_binary_frame(
 }
 
 /// Sends a text frame to the websocket client.
-/// 
+///
 pub fn send_text_frame(
   conn: WebsocketConnection,
   text: String,
@@ -817,4 +823,92 @@ pub fn send_text_frame(
     conn.deflate,
     text,
   )
+}
+
+// -----------------------------------------------------------------------------
+// SERVER-SENT EVENT
+// -----------------------------------------------------------------------------
+
+// TODO: docs
+
+pub type SSEConnection =
+  ewe_sse.SSEConnection
+
+pub opaque type SSENext(user_state) {
+  SSEContinue(user_state)
+  SSENormalStop
+  SSEAbnormalStop(reason: String)
+}
+
+pub fn sse_continue(user_state: user_state) -> SSENext(user_state) {
+  SSEContinue(user_state)
+}
+
+pub fn sse_stop() -> SSENext(user_state) {
+  SSENormalStop
+}
+
+pub fn sse_stop_abnormal(reason: String) -> SSENext(user_state) {
+  SSEAbnormalStop(reason)
+}
+
+fn to_internal_sse_next(
+  next: SSENext(user_state),
+) -> ewe_sse.SSENext(user_state) {
+  case next {
+    SSEContinue(user_state) -> ewe_sse.Continue(user_state)
+    SSENormalStop -> ewe_sse.NormalStop
+    SSEAbnormalStop(reason) -> ewe_sse.AbnormalStop(reason)
+  }
+}
+
+pub type SSEEvent =
+  ewe_sse.SSEEvent
+
+pub fn event(data: String) -> SSEEvent {
+  ewe_sse.SSEEvent(event: None, data:, id: None, retry: None)
+}
+
+pub fn event_name(event: SSEEvent, name: String) -> SSEEvent {
+  ewe_sse.SSEEvent(..event, event: Some(name))
+}
+
+pub fn event_id(event: SSEEvent, id: String) -> SSEEvent {
+  ewe_sse.SSEEvent(..event, id: Some(id))
+}
+
+pub fn event_retry(event: SSEEvent, retry: Int) -> SSEEvent {
+  ewe_sse.SSEEvent(..event, retry: Some(retry))
+}
+
+pub fn sse(
+  req: Request,
+  on_init: fn(Subject(user_message)) -> user_state,
+  handler: fn(SSEConnection, user_state, user_message) -> SSENext(user_state),
+) {
+  let handler = fn(conn, state, msg) {
+    handler(conn, state, msg)
+    |> to_internal_sse_next()
+  }
+
+  let transport = req.body.transport
+  let socket = req.body.socket
+
+  case ewe_sse.send_response(transport, socket) {
+    Ok(Nil) -> {
+      case ewe_sse.start(transport, socket, on_init, handler) {
+        Ok(selector) ->
+          response.new(200) |> response.set_body(SSE(MonitorSelector(selector)))
+        Error(_) -> response.new(400) |> response.set_body(Empty)
+      }
+    }
+    Error(Nil) -> response.new(400) |> response.set_body(Empty)
+  }
+}
+
+pub fn send_event(
+  conn: SSEConnection,
+  event: SSEEvent,
+) -> Result(Nil, glisten.SocketReason) {
+  ewe_sse.send_event(conn.transport, conn.socket, event)
 }

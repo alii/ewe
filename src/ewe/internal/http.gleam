@@ -49,7 +49,8 @@ pub type ResponseBody {
   ChunkedData(yielder.Yielder(BitArray))
   File(descriptor: file.IoDevice, offset: Int, size: Int)
 
-  WebsocketConnection(Selector(process.Down))
+  Websocket(Selector(process.Down))
+  SSE(Selector(process.Down))
 
   Empty
 }
