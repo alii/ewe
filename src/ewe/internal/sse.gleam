@@ -31,6 +31,15 @@ pub type SSENext(user_state) {
   AbnormalStop(reason: String)
 }
 
+pub type SSEMessages(user_message) {
+  User(user_message)
+  Internal(Internal)
+}
+
+pub type Internal {
+  Down
+}
+
 pub fn send_response(transport: Transport, socket: Socket) -> Result(Nil, Nil) {
   response.new(200)
   |> response.set_header("content-type", "text/event-stream")
@@ -46,22 +55,43 @@ pub fn start(
   socket: Socket,
   on_init: fn(Subject(user_message)) -> user_state,
   handler: fn(SSEConnection, user_state, user_message) -> SSENext(user_state),
-) -> Result(Selector(process.Down), actor.StartError) {
-  actor.new_with_initialiser(1000, fn(subject) {
-    actor.initialised(on_init(subject))
+) -> Result(#(Selector(process.Down), Subject(Internal)), actor.StartError) {
+  let internal_subject = process.new_subject()
+
+  actor.new_with_initialiser(1000, fn(_subject) {
+    let subject = process.new_subject()
+    let state = on_init(subject)
+
+    let selector =
+      process.new_selector()
+      |> process.select_map(subject, fn(user_message) { User(user_message) })
+      |> process.select_map(internal_subject, fn(internal_message) {
+        Internal(internal_message)
+      })
+
+    actor.initialised(state)
+    |> actor.selecting(selector)
     |> actor.returning(subject)
     |> Ok
   })
   |> actor.on_message(fn(state, message) {
-    case handler(SSEConnection(transport, socket), state, message) {
-      Continue(new_state) -> actor.continue(new_state)
-      NormalStop -> {
-        echo "normal stop :)" as "potential `on_close` callback?"
-        actor.stop()
+    case message {
+      User(message) -> {
+        case handler(SSEConnection(transport, socket), state, message) {
+          Continue(new_state) -> actor.continue(new_state)
+          NormalStop -> {
+            echo "normal stop :)" as "potential `on_close` callback?"
+            actor.stop()
+          }
+          AbnormalStop(reason) -> {
+            echo reason as "potential `on_close` callback?"
+            actor.stop_abnormal(reason)
+          }
+        }
       }
-      AbnormalStop(reason) -> {
-        echo reason as "potential `on_close` callback?"
-        actor.stop_abnormal(reason)
+      Internal(Down) -> {
+        echo "internal stop" as "potential `on_close` callback?"
+        actor.stop()
       }
     }
   })
@@ -69,10 +99,13 @@ pub fn start(
   |> result.map(fn(started) {
     let assert Ok(pid) = process.subject_owner(started.data)
 
-    process.select_specific_monitor(
-      process.new_selector(),
-      process.monitor(pid),
-      function.identity,
+    #(
+      process.select_specific_monitor(
+        process.new_selector(),
+        process.monitor(pid),
+        function.identity,
+      ),
+      internal_subject,
     )
   })
 }

@@ -60,10 +60,10 @@ pub fn send(
 // FILE OPERATIONS
 // -----------------------------------------------------------------------------
 
-@external(erlang, "mist_ffi", "open_file")
+@external(erlang, "ewe_ffi", "open_file")
 pub fn open(path: String) -> Result(File, FileError)
 
-@external(erlang, "mist_ffi", "close_file")
+@external(erlang, "ewe_ffi", "close_file")
 pub fn close(file: IoDevice) -> Result(Nil, FileError)
 
 @external(erlang, "file", "sendfile")

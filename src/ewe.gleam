@@ -244,8 +244,7 @@ pub type ResponseBody {
   /// Allows upgrading request to a WebSocket connection.
   ///
   Websocket(MonitorSelector)
-
-  SSE(MonitorSelector)
+  SSE(MonitorSelector, Subject(ewe_sse.Internal))
 }
 
 /// Used to monitor a WebSocket connection. Use `MonitorSelector` only when you
@@ -274,7 +273,8 @@ fn transform_response_body(
     File(descriptor, offset, size) -> ewe_http.File(descriptor, offset, size)
 
     Websocket(MonitorSelector(selector)) -> ewe_http.Websocket(selector)
-    SSE(MonitorSelector(selector)) -> ewe_http.SSE(selector)
+    SSE(MonitorSelector(selector), internal_subject) ->
+      ewe_http.SSE(selector, internal_subject)
 
     Empty -> ewe_http.Empty
   })
@@ -883,8 +883,9 @@ pub fn event_retry(event: SSEEvent, retry: Int) -> SSEEvent {
 
 pub fn sse(
   req: Request,
-  on_init: fn(Subject(user_message)) -> user_state,
-  handler: fn(SSEConnection, user_state, user_message) -> SSENext(user_state),
+  on_init on_init: fn(Subject(user_message)) -> user_state,
+  handler handler: fn(SSEConnection, user_state, user_message) ->
+    SSENext(user_state),
 ) {
   let handler = fn(conn, state, msg) {
     handler(conn, state, msg)
@@ -897,8 +898,10 @@ pub fn sse(
   case ewe_sse.send_response(transport, socket) {
     Ok(Nil) -> {
       case ewe_sse.start(transport, socket, on_init, handler) {
-        Ok(selector) ->
-          response.new(200) |> response.set_body(SSE(MonitorSelector(selector)))
+        Ok(#(selector, internal_subject)) -> {
+          response.new(200)
+          |> response.set_body(SSE(MonitorSelector(selector), internal_subject))
+        }
         Error(_) -> response.new(400) |> response.set_body(Empty)
       }
     }

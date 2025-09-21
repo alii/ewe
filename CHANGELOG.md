@@ -3,10 +3,11 @@
 # Unreleased
 
 - Rename internal imports
+- Fix invalid ffi file naming
 
 # v1.0.0-rc1
 
-- Adjust types & functions to follow responsibilities of a web server, completely excluding potential framework-like features. 
+- Adjust types & functions to follow responsibilities of a web server, completely excluding potential framework-like features.
 - Improve validation of `upgrade` header when upgrading to WebSocket connection.
 - Remove internal `information` actor for retrieving server information.
 - Improve documentation.

@@ -2,6 +2,7 @@
 // IMPORTS
 // -----------------------------------------------------------------------------
 import ewe/internal/file
+import ewe/internal/sse
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/erlang/process
@@ -131,8 +132,13 @@ fn call_handler(
     |> result.unwrap_both()
 
   case resp {
-    Response(body: Websocket(selector), ..) | Response(body: SSE(selector), ..) -> {
+    Response(body: Websocket(selector), ..) -> {
       let _ = process.selector_receive_forever(selector)
+      Stop
+    }
+    Response(body: SSE(selector, internal_subject), ..) -> {
+      let _ = process.selector_receive_forever(selector)
+      process.send(internal_subject, sse.Down)
       Stop
     }
     Response(body:, ..) -> {
