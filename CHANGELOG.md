@@ -1,10 +1,11 @@
 # Changelog
 
-# Unreleased
+# v1.0.0-rc2
 
 - Rename internal imports
 - Fix invalid ffi file namings
 - Add support for Server-Sent Events
+- Better README file
 
 # v1.0.0-rc1
 
