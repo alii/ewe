@@ -42,7 +42,7 @@ fn handler(_req: Request) -> Response {
 
 ### Sending Response
 
-`ewe` provides several response body types (see [`ResponseBody`](https://hexdocs.pm/ewe/ewe.html#ResponseBody) type). Request handler must return `Response` type with `ResponseBody`. You can also use `ewe.Request`/`ewe.Response` as they are aliases for `Request(Connection)`/`Response(ResponseBody)`.
+`ewe` provides several response body types (see [`ResponseBody`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#ResponseBody) type). Request handler must return `Response` type with `ResponseBody`. You can also use `ewe.Request`/`ewe.Response` as they are aliases for `Request(Connection)`/`Response(ResponseBody)`.
 
 
 ```gleam
@@ -70,7 +70,7 @@ fn handler(req: Request(Connection)) -> Response(ResponseBody) {
 
 ### Getting Request Body
 
-To read the body of a request, use [`ewe.read_body`](https://hexdocs.pm/ewe/ewe.html#read_body). This function is intended for cases where the entire body can safely be loaded into memory.
+To read the body of a request, use [`ewe.read_body`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#read_body). This function is intended for cases where the entire body can safely be loaded into memory.
 
 ```gleam
 import ewe.{type Request, type Response}
@@ -99,7 +99,7 @@ fn handle_echo(req: Request) -> Response {
 
 ### Streaming
 
-For larger request bodies, [`ewe.stream_body`](https://hexdocs.pm/ewe/ewe.html#stream_body) provides a streaming interface. It produces a `Consumer` which can be called repeatedly to read fixed-size chunks. This enables efficient handling of large payloads without buffering them fully.
+For larger request bodies, [`ewe.stream_body`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#stream_body) provides a streaming interface. It produces a `Consumer` which can be called repeatedly to read fixed-size chunks. This enables efficient handling of large payloads without buffering them fully.
 
 
 ```gleam
@@ -147,7 +147,7 @@ pub fn main() {
 
 ### File Serving
 
-Static files can be sent using [`ewe.file`](https://hexdocs.pm/ewe/ewe.html#file). It accepts a path and optional `offset`/`limit` parameters. This allows serving HTML pages, assets, or binary files with minimal effort.
+Static files can be sent using [`ewe.file`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#file). It accepts a path and optional `offset`/`limit` parameters. This allows serving HTML pages, assets, or binary files with minimal effort.
 
 ```gleam
 import ewe.{type Request, type Response}
@@ -172,7 +172,7 @@ fn serve_file(path: String) -> Response {
 
 ## WebSocket
 
-Use [`ewe.upgrade_websocket`](https://hexdocs.pm/ewe/ewe.html#upgrade_websocket) to switch an HTTP request into a WebSocket connection. Incoming messages are represented as [`WebsocketMessage`](https://hexdocs.pm/ewe/ewe.html#WebsocketMessage). Outgoing frames are sent with [`ewe.send_text_frame`](https://hexdocs.pm/ewe/ewe.html#send_text_frame) or [`ewe.send_binary_frame`](https://hexdocs.pm/ewe/ewe.html#send_binary_frame). Handlers control the connection lifecycle with [`WebsocketNext`](https://hexdocs.pm/ewe/ewe.html#WebsocketNext).
+Use [`ewe.upgrade_websocket`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#upgrade_websocket) to switch an HTTP request into a WebSocket connection. Incoming messages are represented as [`WebsocketMessage`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#WebsocketMessage). Outgoing frames are sent with [`ewe.send_text_frame`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#send_text_frame) or [`ewe.send_binary_frame`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#send_binary_frame). Handlers control the connection lifecycle with [`WebsocketNext`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#WebsocketNext).
 
 ```gleam
 import ewe.{type Request, type Response}
@@ -258,7 +258,7 @@ fn handle_websocket(
 ### Server-Sent Events
 
 
-Use [`ewe.sse`](https://hexdocs.pm/ewe/ewe.html#sse) to establish a Server-Sent Events connection for real-time data streaming to clients. The connection is managed through [`SSEConnection`](https://hexdocs.pm/ewe/ewe.html#SSEConnection) and events are sent with [`ewe.send_event`](https://hexdocs.pm/ewe/ewe.html#send_event). Handlers control the connection lifecycle with [`SSENext`](https://hexdocs.pm/ewe/ewe.html#SSENext). This enables efficient one-way communication for live updates, notifications, or real-time data feeds.
+Use [`ewe.sse`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#sse) to establish a Server-Sent Events connection for real-time data streaming to clients. The connection is managed through [`SSEConnection`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#SSEConnection) and events are sent with [`ewe.send_event`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#send_event). Handlers control the connection lifecycle with [`SSENext`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#SSENext). This enables efficient one-way communication for live updates, notifications, or real-time data feeds.
 
 ```gleam
 import ewe.{type Request, type Response}
@@ -525,4 +525,4 @@ fn announce(registry: Subject(ProcessRegistryMessage), message: String) -> Nil {
 
 ## API Reference
 
-For detailed API documentation, see [hexdocs.pm/ewe](https://hexdocs.pm/ewe/).
+For detailed API documentation, see [hexdocs.pm/ewe](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html).
