@@ -42,7 +42,7 @@ pub fn main() {
 
 ### [Sending Response](test/preview/sending_response.gleam)
 
-`ewe` provides several response body types (see [`ResponseBody`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#ResponseBody) type). Request handler must return `Response` type with `ResponseBody`. You can also use `ewe.Request`/`ewe.Response` as they are aliases for `Request(Connection)`/`Response(ResponseBody)`.
+`ewe` provides several response body types (see [`ewe.ResponseBody`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#ResponseBody) type). Request handler must return [`response.Response`](https://hexdocs.pm/gleam_http/gleam/http/response.html#Response) type with [`ewe.ResponseBody`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#ResponseBody). You can also use [`ewe.Request`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#Request)/[`ewe.Response`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#Response) as they are aliases for `request.Request(Connection)`(see [`request.Request`](https://hexdocs.pm/gleam_http/gleam/http/request.html#Request) & [`ewe.Connection`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#Connection))/`response.Response(ResponseBody)`.
 
 
 ```gleam
@@ -113,7 +113,7 @@ fn handle_echo(req: Request) -> Response {
 
 ### [Streaming](test/preview/streaming.gleam)
 
-For larger request bodies, [`ewe.stream_body`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#stream_body) provides a streaming interface. It produces a `Consumer` which can be called repeatedly to read fixed-size chunks. This enables efficient handling of large payloads without buffering them fully.
+For larger request bodies, [`ewe.stream_body`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#stream_body) provides a streaming interface. It produces a [`ewe.Consumer`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#Consumer) which can be called repeatedly to read fixed-size chunks. This enables efficient handling of large payloads without buffering them fully.
 
 
 ```gleam
@@ -191,7 +191,7 @@ fn serve_file(path: String) -> Response {
 
 ## [WebSocket](test/preview/websocket.gleam)
 
-Use [`ewe.upgrade_websocket`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#upgrade_websocket) to switch an HTTP request into a WebSocket connection. Incoming messages are represented as [`WebsocketMessage`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#WebsocketMessage). Outgoing frames are sent with [`ewe.send_text_frame`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#send_text_frame) or [`ewe.send_binary_frame`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#send_binary_frame). Handlers control the connection lifecycle with [`WebsocketNext`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#WebsocketNext).
+Use [`ewe.upgrade_websocket`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#upgrade_websocket) to switch an HTTP request into a WebSocket connection. Incoming messages are represented as [`ewe.WebsocketMessage`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#WebsocketMessage). Outgoing frames are sent with [`ewe.send_text_frame`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#send_text_frame) or [`ewe.send_binary_frame`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#send_binary_frame). Handlers control the connection lifecycle with [`ewe.WebsocketNext`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#WebsocketNext).
 
 ```gleam
 import gleam/erlang/charlist.{type Charlist}
@@ -295,7 +295,7 @@ fn pid_to_list(pid: Pid) -> Charlist
 ### [Server-Sent Events](test/preview/sse.gleam)
 
 
-Use [`ewe.sse`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#sse) to establish a Server-Sent Events connection for real-time data streaming to clients. The connection is managed through [`SSEConnection`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#SSEConnection) and events are sent with [`ewe.send_event`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#send_event). Handlers control the connection lifecycle with [`SSENext`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#SSENext). This enables efficient one-way communication for live updates, notifications, or real-time data feeds.
+Use [`ewe.sse`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#sse) to establish a Server-Sent Events connection for real-time data streaming to clients. The connection is managed through [`ewe.SSEConnection`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#SSEConnection) and events are sent with [`ewe.send_event`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#send_event). Handlers control the connection lifecycle with [`ewe.SSENext`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#SSENext). This enables efficient one-way communication for live updates, notifications, or real-time data feeds.
 
 ```gleam
 import gleam/bit_array
