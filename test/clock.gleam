@@ -5,6 +5,7 @@ import gleam/list
 
 pub fn main() {
   let iterations = 10_000_000
+
   clock.get_http_date()
 
   let begin = now_microseconds()

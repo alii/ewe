@@ -292,18 +292,20 @@ fn pid_to_string(pid: Pid) -> String {
 fn pid_to_list(pid: Pid) -> Charlist
 ```
 
-### Server-Sent Events
+### [Server-Sent Events](test/preview/sse.gleam)
 
 
 Use [`ewe.sse`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#sse) to establish a Server-Sent Events connection for real-time data streaming to clients. The connection is managed through [`SSEConnection`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#SSEConnection) and events are sent with [`ewe.send_event`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#send_event). Handlers control the connection lifecycle with [`SSENext`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#SSENext). This enables efficient one-way communication for live updates, notifications, or real-time data feeds.
 
 ```gleam
-import ewe.{type Request, type Response}
 import gleam/bit_array
-import gleam/erlang/process.{type Subject}
+import gleam/erlang/charlist.{type Charlist}
+import gleam/erlang/process.{type Pid, type Subject}
 import gleam/http/request
 import gleam/http/response
 import logging
+
+import ewe.{type Request, type Response}
 
 type PubSubMessage {
   Subscribe(client: Subject(String))
@@ -311,14 +313,18 @@ type PubSubMessage {
   Publish(String)
 }
 
-fn handle_request(req: Request, pubsub: Subject(PubSubMessage)) -> Response {
+fn handler(req: Request, pubsub: Subject(PubSubMessage)) -> Response {
   case request.path_segments(req) {
     ["sse"] ->
       ewe.sse(
         req,
         on_init: fn(client) {
           process.send(pubsub, Subscribe(client))
-          logging.log(logging.Info, "SSE connection opened!")
+          logging.log(
+            logging.Info,
+            "SSE connection opened: " <> pid_to_string(process.self()),
+          )
+
           client
         },
         handler: fn(conn, client, message) {
@@ -329,7 +335,10 @@ fn handle_request(req: Request, pubsub: Subject(PubSubMessage)) -> Response {
         },
         on_close: fn(_conn, client) {
           process.send(pubsub, Unsubscribe(client))
-          logging.log(logging.Info, "SSE connection closed!")
+          logging.log(
+            logging.Info,
+            "SSE connection closed: " <> pid_to_string(process.self()),
+          )
         },
       )
     ["publish"] -> {
@@ -345,219 +354,373 @@ fn handle_request(req: Request, pubsub: Subject(PubSubMessage)) -> Response {
     _ -> response.new(404) |> response.set_body(ewe.Empty)
   }
 }
+
+fn pid_to_string(pid: Pid) -> String {
+  charlist.to_string(pid_to_list(pid))
+}
+
+@external(erlang, "erlang", "pid_to_list")
+fn pid_to_list(pid: Pid) -> Charlist
 ```
 
-### Complete Preview
+### [Complete Preview](test/preview.gleam)
 
 ```gleam
 import gleam/bit_array
-import gleam/erlang/process.{type Subject}
+import gleam/crypto
+import gleam/dict
+import gleam/erlang/charlist.{type Charlist}
+import gleam/erlang/process.{type Name, type Pid, type Subject}
 import gleam/http/request
 import gleam/http/response
 import gleam/int
-import gleam/io
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{None, Some}
 import gleam/otp/actor
+import gleam/otp/static_supervisor as supervisor
+import gleam/otp/supervision.{type ChildSpecification}
 import gleam/result
+import gleam/string
 import gleam/yielder
+import logging
 
 import ewe.{type Request, type Response}
 
 pub fn main() {
-  // Start a process registry to manage WebSocket connections
-  let assert Ok(started) = process_registry()
-  let registry = started.data
+  logging.configure()
+  logging.set_level(logging.Info)
 
-  // Define crash response for server errors
-  let on_crash =
-    "Something went wrong, try again later"
-    |> ewe.TextData
-    |> response.set_body(response.new(500), _)
+  // Create a named subject for the pubsub worker
+  let pubsub_name = process.new_name("pubsub")
+  let pubsub = process.named_subject(pubsub_name)
 
-  // Configure and start the web server on port 4000
+  // Configure and start the supervision tree with pubsub worker and the ewe 
+  // server, that listens on port 8080
   let assert Ok(_) =
-    ewe.new(handler(_, registry))
-    |> ewe.on_crash(on_crash)
-    |> ewe.bind_all()
-    |> ewe.listening(port: 4000)
-    |> ewe.start()
+    supervisor.new(supervisor.OneForAll)
+    |> supervisor.add(pubsub_worker(pubsub_name))
+    |> supervisor.add(
+      ewe.new(handler(_, pubsub))
+      |> ewe.bind_all()
+      |> ewe.listening(port: 8080)
+      |> ewe.supervised(),
+    )
+    |> supervisor.start()
 
   process.sleep_forever()
 }
 
+// Define the messages that can be sent to the pubsub worker
+type PubSubMessage {
+  Subscribe(topic: String, client: Subject(Broadcast))
+  Publish(topic: String, message: Broadcast)
+  Unsubscribe(topic: String, client: Subject(Broadcast))
+}
+
+// Define the messages that could be received by websocket and SSE clients
+type Broadcast {
+  Text(String)
+  Bytes(BitArray)
+}
+
+// Define the state of the websocket connection
+type WebsocketState {
+  WebsocketState(
+    pubsub: Subject(PubSubMessage),
+    topic: String,
+    client: Subject(Broadcast),
+  )
+}
+
+// Main logic of the pubsub worker, that handles the messages and keeps track of
+// the clients on topics. Its implementation is not really important
+fn pubsub_worker(
+  named: Name(PubSubMessage),
+) -> ChildSpecification(Subject(PubSubMessage)) {
+  let pubsub =
+    actor.new(dict.new())
+    |> actor.on_message(fn(state, msg) {
+      case msg {
+        Subscribe(topic:, client:) -> {
+          let new_state =
+            dict.upsert(in: state, update: topic, with: fn(clients) {
+              case clients {
+                Some(clients) -> [client, ..clients]
+                None -> {
+                  logging.log(logging.Info, "Creating topic " <> topic)
+                  [client]
+                }
+              }
+            })
+
+          let assert Ok(pid) = process.subject_owner(client)
+          logging.log(
+            logging.Info,
+            "Subscribing client " <> pid_to_string(pid) <> " to topic " <> topic,
+          )
+
+          actor.continue(new_state)
+        }
+        Publish(topic:, message:) -> {
+          case message {
+            Text(text) ->
+              logging.log(
+                logging.Info,
+                "Publishing text message `" <> text <> "` to topic " <> topic,
+              )
+            Bytes(binary) ->
+              logging.log(
+                logging.Info,
+                "Publishing binary message `"
+                  <> string.inspect(binary)
+                  <> "` to topic "
+                  <> topic,
+              )
+          }
+
+          case dict.get(state, topic) {
+            Ok(clients) -> list.each(clients, actor.send(_, message))
+            Error(_) -> Nil
+          }
+
+          actor.continue(state)
+        }
+        Unsubscribe(topic:, client:) -> {
+          let assert Ok(pid) = process.subject_owner(client)
+          logging.log(
+            logging.Info,
+            "Unsubscribing client "
+              <> pid_to_string(pid)
+              <> " from topic "
+              <> topic,
+          )
+
+          let new_state = case dict.get(state, topic) {
+            Ok([_]) | Ok([]) -> {
+              logging.log(logging.Info, "Dropping topic " <> topic)
+              dict.drop(state, [topic])
+            }
+            Ok(clients) -> {
+              list.filter(clients, fn(c) { c != client })
+              |> dict.insert(state, topic, _)
+            }
+            Error(_) -> state
+          }
+
+          actor.continue(new_state)
+        }
+      }
+    })
+    |> actor.named(named)
+
+  supervision.worker(fn() {
+    logging.log(logging.Info, "Starting pubsub worker")
+    actor.start(pubsub)
+  })
+}
+
 // Main HTTP request handler that routes requests to different endpoints
-fn handler(req: Request, registry: Subject(ProcessRegistryMessage)) -> Response {
+fn handler(req: Request, pubsub: Subject(PubSubMessage)) -> Response {
   case request.path_segments(req) {
     // GET /hello/:name - Simple greeting endpoint
     ["hello", name] -> {
-      { "Hello, " <> name <> "!" }
-      |> ewe.TextData
-      |> response.set_body(response.new(200), _)
+      response.new(200)
+      |> response.set_header("content-type", "text/plain; charset=utf-8")
+      |> response.set_body(ewe.TextData("Hello, " <> name <> "!"))
     }
-    // POST /echo - Echo request body back to client
-    ["echo"] -> handle_echo(req, None)
-    // POST /stream/:size - Stream request body in chunks
-    ["stream", sized] -> handle_echo(req, Some(sized))
-    // WebSocket upgrade endpoint
-    ["ws"] ->
+    // GET /bytes/:amount - Generate random N bytes
+    ["bytes", amount] -> {
+      let random_bytes =
+        int.parse(amount)
+        |> result.unwrap(0)
+        |> crypto.strong_random_bytes()
+
+      response.new(200)
+      |> response.set_header("content-type", "application/octet-stream")
+      |> response.set_body(ewe.BitsData(random_bytes))
+    }
+
+    // POST /echo - Echo back the request body
+    ["echo"] -> handle_echo(req)
+    // POST /stream/:chunk_size - Stream and echo back the request body in chunks
+    ["stream", chunk_size] ->
+      handle_stream(req, int.parse(chunk_size) |> result.unwrap(16))
+
+    // GET /file/:path - Serve a file from the public directory
+    ["file", path] -> serve_file(path)
+
+    // POST /topic/:topic/ws - Upgrade to WebSocket connection
+    ["topic", topic, "ws"] ->
       ewe.upgrade_websocket(
         req,
         on_init: fn(_conn, selector) {
-          let subject = process.new_subject()
-          register(registry, subject)
+          logging.log(
+            logging.Info,
+            "WebSocket connection opened: " <> pid_to_string(process.self()),
+          )
 
-          io.println("WebSocket connection established!")
+          let client = process.new_subject()
+          process.send(pubsub, Subscribe(topic:, client:))
 
-          #(Nil, process.select(selector, subject))
+          let state = WebsocketState(pubsub:, topic:, client:)
+          let selector = process.select(selector, client)
+
+          #(state, selector)
         },
         handler: handle_websocket,
-        on_close: fn(_conn, _state) {
-          io.println("WebSocket connection closed!")
+        on_close: fn(_conn, state) {
+          let assert Ok(pid) = process.subject_owner(state.client)
+          logging.log(
+            logging.Info,
+            "WebSocket connection closed: " <> pid_to_string(pid),
+          )
+
+          process.send(pubsub, Unsubscribe(state.topic, state.client))
         },
       )
-    // POST /ws/announce/:text - Broadcast message to all WebSocket connections
-    ["ws", "announce", text] -> {
-      announce(registry, text)
 
-      response.new(200)
+    // POST /topic/:topic/sse - Switch to Server-Sent Events connection
+    ["topic", topic, "sse"] ->
+      ewe.sse(
+        req,
+        on_init: fn(client) {
+          logging.log(
+            logging.Info,
+            "SSE connection opened: " <> pid_to_string(process.self()),
+          )
+
+          process.send(pubsub, Subscribe(topic:, client:))
+          client
+        },
+        handler: fn(conn, client, message) {
+          let assert Ok(_) = case message {
+            Text(text) -> ewe.send_event(conn, ewe.event(text))
+            _ -> Ok(Nil)
+          }
+
+          ewe.sse_continue(client)
+        },
+        on_close: fn(_conn, client) {
+          logging.log(
+            logging.Info,
+            "SSE connection closed: " <> pid_to_string(process.self()),
+          )
+
+          process.send(pubsub, Unsubscribe(topic:, client:))
+        },
+      )
+
+    // All other routes return 404
+    _ ->
+      response.new(404)
       |> response.set_body(ewe.Empty)
-    }
-    // 404 for unknown routes
-    _ -> {
-      "Unknown endpoint"
-      |> ewe.TextData
-      |> response.set_body(response.new(404), _)
-    }
   }
 }
 
-// Helper function to consume request body in chunks for streaming
-fn consume_body(
-  size: Int,
-) -> fn(ewe.Consumer) -> yielder.Step(BitArray, ewe.Consumer) {
-  fn(consumer) {
-    case consumer(size) {
-      Ok(ewe.Consumed(data, next)) -> {
-        io.println(
-          "Consumed "
-          <> int.to_string(bit_array.byte_size(data))
-          <> " bytes: "
-          <> bit_array.to_string(data) |> result.unwrap(""),
-        )
-        yielder.Next(data, next)
-      }
-      Ok(ewe.Done) | Error(_) -> yielder.Done
-    }
-  }
-}
-
-// Handler for echo endpoints - returns request body back to client
-fn handle_echo(req: Request, stream: Option(String)) -> Response {
+fn handle_echo(req: Request) -> Response {
   let content_type =
     request.get_header(req, "content-type")
-    |> result.unwrap("text/plain")
+    |> result.unwrap("application/octet-stream")
 
-  let invalid_body =
-    "Invalid request"
-    |> ewe.TextData
-    |> response.set_body(response.new(400), _)
-
-  case option.map(stream, int.parse) {
-    // Stream mode: return body as chunked response
-    Some(Ok(size)) -> {
-      let assert Ok(consumer) = ewe.stream_body(req)
-
-      yielder.unfold(consumer, consume_body(size))
-      |> ewe.ChunkedData
-      |> response.set_body(response.new(200), _)
+  case ewe.read_body(req, 1024) {
+    Ok(req) ->
+      response.new(200)
       |> response.set_header("content-type", content_type)
+      |> response.set_body(ewe.BitsData(req.body))
+    Error(ewe.BodyTooLarge) ->
+      response.new(413)
+      |> response.set_header("content-type", "text/plain; charset=utf-8")
+      |> response.set_body(ewe.TextData("Body too large"))
+    Error(ewe.InvalidBody) ->
+      response.new(400)
+      |> response.set_header("content-type", "text/plain; charset=utf-8")
+      |> response.set_body(ewe.TextData("Invalid request"))
+  }
+}
+
+fn handle_stream(req: Request, chunk_size: Int) -> Response {
+  let content_type =
+    request.get_header(req, "content-type")
+    |> result.unwrap("application/octet-stream")
+
+  case ewe.stream_body(req) {
+    Ok(consumer) -> {
+      let yielder =
+        yielder.unfold(consumer, fn(consumer) {
+          case consumer(chunk_size) {
+            Ok(ewe.Consumed(data, next)) -> {
+              logging.log(logging.Info, {
+                "Consumed "
+                <> int.to_string(bit_array.byte_size(data))
+                <> " bytes: "
+                <> string.inspect(data)
+              })
+
+              yielder.Next(data, next)
+            }
+            Ok(ewe.Done) | Error(_) -> yielder.Done
+          }
+        })
+
+      response.new(200)
+      |> response.set_header("content-type", content_type)
+      |> response.set_body(ewe.ChunkedData(yielder))
     }
-    Some(Error(_)) -> invalid_body
-    // Regular mode: read entire body and echo back
-    None -> {
-      case ewe.read_body(req, 1024) {
-        Ok(req) ->
-          ewe.BitsData(req.body)
-          |> response.set_body(response.new(200), _)
-          |> response.set_header("content-type", content_type)
-        Error(_) -> invalid_body
-      }
+    Error(_) ->
+      response.new(400)
+      |> response.set_header("content-type", "text/plain; charset=utf-8")
+      |> response.set_body(ewe.TextData("Invalid request"))
+  }
+}
+
+fn serve_file(path: String) -> Response {
+  case ewe.file("public" <> path, offset: None, limit: None) {
+    Ok(file) -> {
+      response.new(200)
+      |> response.set_header("content-type", "application/octet-stream")
+      |> response.set_body(file)
+    }
+    Error(_) -> {
+      response.new(404)
+      |> response.set_header("content-type", "text/plain; charset=utf-8")
+      |> response.set_body(ewe.TextData("File not found"))
     }
   }
 }
 
-type Broadcast {
-  Announcement(String)
-}
-
-// WebSocket message handler - processes incoming WebSocket frames
 fn handle_websocket(
   conn: ewe.WebsocketConnection,
-  state: Nil,
+  state: WebsocketState,
   msg: ewe.WebsocketMessage(Broadcast),
-) -> ewe.WebsocketNext(Nil, Broadcast) {
+) -> ewe.WebsocketNext(WebsocketState, Broadcast) {
   case msg {
-    ewe.Text("Ping") -> {
-      let _ = ewe.send_text_frame(conn, "Pong")
-      ewe.websocket_continue(state)
-    }
-    ewe.Text("Exit") -> ewe.websocket_stop()
-
-    // Handle broadcast messages from registry
-    ewe.User(Announcement(text)) -> {
-      let _ = ewe.send_text_frame(conn, "Announcement: " <> text)
-      ewe.websocket_continue(state)
-    }
-
-    // Echo binary frames back to client
-    ewe.Binary(binary) -> {
-      let _ = ewe.send_binary_frame(conn, binary)
-      ewe.websocket_continue(state)
-    }
-    // Echo text frames back to client
     ewe.Text(text) -> {
-      let _ = ewe.send_text_frame(conn, text)
+      process.send(state.pubsub, Publish(state.topic, Text(text)))
+      ewe.websocket_continue(state)
+    }
+
+    ewe.Binary(binary) -> {
+      process.send(state.pubsub, Publish(state.topic, Bytes(binary)))
+      ewe.websocket_continue(state)
+    }
+
+    ewe.User(message) -> {
+      let assert Ok(_) = case message {
+        Text(text) -> ewe.send_text_frame(conn, text)
+        Bytes(binary) -> ewe.send_binary_frame(conn, binary)
+      }
+
       ewe.websocket_continue(state)
     }
   }
 }
 
-type ProcessRegistryMessage {
-  Register(Subject(Broadcast))
-  Announce(Broadcast)
+fn pid_to_string(pid: Pid) -> String {
+  charlist.to_string(pid_to_list(pid))
 }
 
-// Creates a registry actor to manage WebSocket connections for broadcasting
-fn process_registry() -> Result(
-  actor.Started(Subject(ProcessRegistryMessage)),
-  actor.StartError,
-) {
-  actor.new([])
-  |> actor.on_message(fn(state, msg) {
-    case msg {
-      Register(subject) -> actor.continue([subject, ..state])
-      Announce(msg) -> {
-        list.each(state, fn(subject) { process.send(subject, msg) })
-        actor.continue(state)
-      }
-    }
-  })
-  |> actor.start()
-}
-
-// Register a WebSocket connection with the broadcast registry
-fn register(
-  registry: Subject(ProcessRegistryMessage),
-  subject: Subject(Broadcast),
-) -> Nil {
-  process.send(registry, Register(subject))
-}
-
-// Send announcement to all registered WebSocket connections
-fn announce(registry: Subject(ProcessRegistryMessage), message: String) -> Nil {
-  process.send(registry, Announce(Announcement(message)))
-}
+@external(erlang, "erlang", "pid_to_list")
+fn pid_to_list(pid: Pid) -> Charlist
 ```
 
 ## API Reference
