@@ -16,243 +16,280 @@ gleam add ewe@1.0.0-rc2 gleam_erlang gleam_otp gleam_http gleam_yielder logging
 ## Quick Start
 
 ```gleam
-import ewe.{type Request, type Response}
 import gleam/erlang/process
 import gleam/http/response
+
+import ewe.{type Request, type Response}
+
+fn handler(_req: Request) -> Response {
+  response.new(200)
+  |> response.set_header("content-type", "text/plain; charset=utf-8")
+  |> response.set_body(ewe.TextData("Hello, World!"))
+}
 
 pub fn main() {
   let assert Ok(_) =
     ewe.new(handler)
     |> ewe.bind_all()
-    |> ewe.listening(port: 4000)
+    |> ewe.listening(port: 8080)
     |> ewe.start()
 
   process.sleep_forever()
-}
-
-fn handler(_req: Request) -> Response {
-  "Hello, World!"
-  |> ewe.TextData
-  |> response.set_body(response.new(200), _)
-  |> response.set_header("content-type", "text/plain; charset=utf-8")
 }
 ```
 
 ## Usage
 
-### Sending Response
+### [Sending Response](test/preview/sending_response.gleam)
 
 `ewe` provides several response body types (see [`ResponseBody`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#ResponseBody) type). Request handler must return `Response` type with `ResponseBody`. You can also use `ewe.Request`/`ewe.Response` as they are aliases for `Request(Connection)`/`Response(ResponseBody)`.
 
 
 ```gleam
-import ewe.{type Connection, type ResponseBody}
+import gleam/crypto
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
+import gleam/int
+import gleam/result
+
+import ewe.{type Connection, type ResponseBody}
 
 fn handler(req: Request(Connection)) -> Response(ResponseBody) {
   case request.path_segments(req) {
-    ["ping"] -> {
-      response.new(200)
-      |> response.set_body(ewe.TextData("pong"))
-      |> response.set_header("content-type", "text/plain; charset=utf-8")
-    }
     ["hello", name] -> {
-      { "Hello, " <> name <> "!" }
-      |> ewe.TextData
-      |> response.set_body(response.new(200), _)
+      response.new(200)
       |> response.set_header("content-type", "text/plain; charset=utf-8")
+      |> response.set_body(ewe.TextData("Hello, " <> name <> "!"))
     }
-    _ -> response.new(404) |> response.set_body(ewe.Empty)
+    ["bytes", amount] -> {
+      let random_bytes =
+        int.parse(amount)
+        |> result.unwrap(0)
+        |> crypto.strong_random_bytes()
+
+      response.new(200)
+      |> response.set_header("content-type", "application/octet-stream")
+      |> response.set_body(ewe.BitsData(random_bytes))
+    }
+    _ ->
+      response.new(404)
+      |> response.set_body(ewe.Empty)
   }
 }
 ```
 
-### Getting Request Body
+### [Getting Request Body](test/preview/getting_request_body.gleam)
 
 To read the body of a request, use [`ewe.read_body`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#read_body). This function is intended for cases where the entire body can safely be loaded into memory.
 
 ```gleam
-import ewe.{type Request, type Response}
 import gleam/http/request
 import gleam/http/response
 import gleam/result
 
+import ewe.{type Request, type Response}
+
 fn handle_echo(req: Request) -> Response {
   let content_type =
     request.get_header(req, "content-type")
-    |> result.unwrap("text/plain")
+    |> result.unwrap("application/octet-stream")
 
   case ewe.read_body(req, 1024) {
     Ok(req) ->
-      ewe.BitsData(req.body)
-      |> response.set_body(response.new(200), _)
+      response.new(200)
       |> response.set_header("content-type", content_type)
-    Error(_) -> {
-      "Invalid request"
-      |> ewe.TextData
-      |> response.set_body(response.new(400), _)
-    }
+      |> response.set_body(ewe.BitsData(req.body))
+    Error(ewe.BodyTooLarge) ->
+      response.new(413)
+      |> response.set_header("content-type", "text/plain; charset=utf-8")
+      |> response.set_body(ewe.TextData("Body too large"))
+    Error(ewe.InvalidBody) ->
+      response.new(400)
+      |> response.set_header("content-type", "text/plain; charset=utf-8")
+      |> response.set_body(ewe.TextData("Invalid request"))
   }
 }
 ```
 
-### Streaming
+### [Streaming](test/preview/streaming.gleam)
 
 For larger request bodies, [`ewe.stream_body`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#stream_body) provides a streaming interface. It produces a `Consumer` which can be called repeatedly to read fixed-size chunks. This enables efficient handling of large payloads without buffering them fully.
 
 
 ```gleam
-import ewe.{type Request, type Response}
 import gleam/bit_array
+import gleam/http/request
 import gleam/http/response
 import gleam/int
+import gleam/result
 import gleam/yielder
 import logging
 
-fn consume_body(
-  size: Int,
-) -> fn(ewe.Consumer) -> yielder.Step(BitArray, ewe.Consumer) {
-  fn(consumer) {
-    case consumer(size) {
-      Ok(ewe.Consumed(data, next)) -> {
-        { "Consumed " <> int.to_string(bit_array.byte_size(data)) <> " bytes" }
-        |> logging.log(logging.Info, _)
-
-        yielder.Next(data, next)
-      }
-      Ok(ewe.Done) | Error(_) -> yielder.Done
-    }
-  }
-}
+import ewe.{type Request, type Response}
 
 fn handle_stream(req: Request, chunk_size: Int) -> Response {
-  let assert Ok(consumer) = ewe.stream_body(req)
+  let content_type =
+    request.get_header(req, "content-type")
+    |> result.unwrap("application/octet-stream")
 
-  yielder.unfold(consumer, consume_body(chunk_size))
-  |> ewe.ChunkedData
-  |> response.set_body(response.new(200), _)
-}
+  case ewe.stream_body(req) {
+    Ok(consumer) -> {
+      let yielder =
+        yielder.unfold(consumer, fn(consumer) {
+          case consumer(chunk_size) {
+            Ok(ewe.Consumed(data, next)) -> {
+              logging.log(logging.Info, {
+                "Consumed "
+                <> int.to_string(bit_array.byte_size(data))
+                <> " bytes: "
+                <> string.inspect(data)
+              })
 
-pub fn main() {
-  let assert Ok(_) =
-    ewe.new(handle_stream(_, 5))
-    |> ewe.bind_all()
-    |> ewe.listening(port: 4000)
-    |> ewe.start()
+              yielder.Next(data, next)
+            }
+            Ok(ewe.Done) | Error(_) -> yielder.Done
+          }
+        })
 
-  process.sleep_forever()
+      response.new(200)
+      |> response.set_header("content-type", content_type)
+      |> response.set_body(ewe.ChunkedData(yielder))
+    }
+    Error(_) ->
+      response.new(400)
+      |> response.set_header("content-type", "text/plain; charset=utf-8")
+      |> response.set_body(ewe.TextData("Invalid request"))
+  }
 }
 ```
 
-### File Serving
+### [File Serving](test/preview/file_serving.gleam)
 
 Static files can be sent using [`ewe.file`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#file). It accepts a path and optional `offset`/`limit` parameters. This allows serving HTML pages, assets, or binary files with minimal effort.
 
 ```gleam
-import ewe.{type Request, type Response}
 import gleam/http/response
 import gleam/option.{None}
 
+import ewe.{type Response}
+
 fn serve_file(path: String) -> Response {
-  case ewe.file(path, offset: None, limit: None) {
+  case ewe.file("public" <> path, offset: None, limit: None) {
     Ok(file) -> {
       response.new(200)
+      |> response.set_header("content-type", "application/octet-stream")
       |> response.set_body(file)
-      |> response.set_header("content-type", "text/html")
     }
     Error(_) -> {
-      "File not found"
-      |> ewe.TextData
-      |> response.set_body(response.new(404), _)
+      response.new(404)
+      |> response.set_header("content-type", "text/plain; charset=utf-8")
+      |> response.set_body(ewe.TextData("File not found"))
     }
   }
 }
 ```
 
-## WebSocket
+## [WebSocket](test/preview/websocket.gleam)
 
 Use [`ewe.upgrade_websocket`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#upgrade_websocket) to switch an HTTP request into a WebSocket connection. Incoming messages are represented as [`WebsocketMessage`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#WebsocketMessage). Outgoing frames are sent with [`ewe.send_text_frame`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#send_text_frame) or [`ewe.send_binary_frame`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#send_binary_frame). Handlers control the connection lifecycle with [`WebsocketNext`](https://hexdocs.pm/ewe/1.0.0-rc2/ewe.html#WebsocketNext).
 
 ```gleam
-import ewe.{type Request, type Response}
-import gleam/bit_array
-import gleam/erlang/process.{type Subject}
+import gleam/erlang/charlist.{type Charlist}
+import gleam/erlang/process.{type Pid, type Subject}
 import gleam/http/request
 import gleam/http/response
 import logging
 
+import ewe.{type Request, type Response}
+
+type PubSubMessage {
+  Subscribe(topic: String, client: Subject(Broadcast))
+  Publish(topic: String, message: Broadcast)
+  Unsubscribe(topic: String, client: Subject(Broadcast))
+}
+
 type Broadcast {
-  Announcement(String)
+  Text(String)
+  Bytes(BitArray)
 }
 
-type ProcessRegistryMessage {
-  Register(Subject(Broadcast))
-  Broadcast(Broadcast)
+type WebsocketState {
+  WebsocketState(
+    pubsub: Subject(PubSubMessage),
+    topic: String,
+    client: Subject(Broadcast),
+  )
 }
 
-fn handle_request(
-  req: Request,
-  registry: Subject(ProcessRegistryMessage),
-) -> Response {
+fn handler(req: Request, pubsub: Subject(PubSubMessage)) -> Response {
   case request.path_segments(req) {
-    ["ws"] ->
+    ["topic", topic] ->
       ewe.upgrade_websocket(
         req,
         on_init: fn(_conn, selector) {
-          let subject = process.new_subject()
+          logging.log(
+            logging.Info,
+            "WebSocket connection opened: " <> pid_to_string(process.self()),
+          )
 
-          process.send(registry, Register(subject))
+          let client = process.new_subject()
+          process.send(pubsub, Subscribe(topic:, client:))
 
-          logging.log(logging.Info, "WebSocket connection opened!")
+          let state = WebsocketState(pubsub:, topic:, client:)
+          let selector = process.select(selector, client)
 
-          #(Nil, process.select(selector, subject))
+          #(state, selector)
         },
         handler: handle_websocket,
-        on_close: fn(_conn, _state) {
-          logging.log(logging.Info, "WebSocket connection closed!")
+        on_close: fn(_conn, state) {
+          let assert Ok(pid) = process.subject_owner(state.client)
+          logging.log(
+            logging.Info,
+            "WebSocket connection closed: " <> pid_to_string(pid),
+          )
+
+          process.send(pubsub, Unsubscribe(state.topic, state.client))
         },
       )
-    ["ws", "announce"] -> {
-      case ewe.read_body(req, 1024) {
-        Ok(req) -> {
-          let assert Ok(text) = bit_array.to_string(req.body)
-
-          process.send(registry, Broadcast(Announcement(text)))
-          response.new(200) |> response.set_body(ewe.Empty)
-        }
-        Error(_) -> response.new(400) |> response.set_body(ewe.Empty)
-      }
-    }
-    _ -> response.new(404) |> response.set_body(ewe.Empty)
+    _ ->
+      response.new(404)
+      |> response.set_body(ewe.Empty)
   }
 }
 
 fn handle_websocket(
   conn: ewe.WebsocketConnection,
-  state: Nil,
+  state: WebsocketState,
   msg: ewe.WebsocketMessage(Broadcast),
-) -> ewe.WebsocketNext(Nil, Broadcast) {
+) -> ewe.WebsocketNext(WebsocketState, Broadcast) {
   case msg {
-    ewe.Text("Ping") -> {
-      let _ = ewe.send_text_frame(conn, "Pong")
-      ewe.websocket_continue(state)
-    }
-    ewe.Text("Exit") -> ewe.websocket_stop()
-    ewe.User(Announcement(text)) -> {
-      let _ = ewe.send_text_frame(conn, "Announcement: " <> text)
-      ewe.websocket_continue(state)
-    }
-    ewe.Binary(binary) -> {
-      let _ = ewe.send_binary_frame(conn, binary)
-      ewe.websocket_continue(state)
-    }
     ewe.Text(text) -> {
-      let _ = ewe.send_text_frame(conn, text)
+      process.send(state.pubsub, Publish(state.topic, Text(text)))
+      ewe.websocket_continue(state)
+    }
+
+    ewe.Binary(binary) -> {
+      process.send(state.pubsub, Publish(state.topic, Bytes(binary)))
+      ewe.websocket_continue(state)
+    }
+
+    ewe.User(message) -> {
+      let assert Ok(_) = case message {
+        Text(text) -> ewe.send_text_frame(conn, text)
+        Bytes(binary) -> ewe.send_binary_frame(conn, binary)
+      }
+
       ewe.websocket_continue(state)
     }
   }
 }
+
+fn pid_to_string(pid: Pid) -> String {
+  charlist.to_string(pid_to_list(pid))
+}
+
+@external(erlang, "erlang", "pid_to_list")
+fn pid_to_list(pid: Pid) -> Charlist
 ```
 
 ### Server-Sent Events
@@ -310,7 +347,7 @@ fn handle_request(req: Request, pubsub: Subject(PubSubMessage)) -> Response {
 }
 ```
 
-### Complete Example
+### Complete Preview
 
 ```gleam
 import gleam/bit_array
