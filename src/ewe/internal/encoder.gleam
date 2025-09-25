@@ -119,6 +119,6 @@ fn status_to_bit_array(status: Int) -> BitArray {
     508 -> <<"Loop Detected">>
     510 -> <<"Not Extended">>
     511 -> <<"Network Authentication Required">>
-    _ -> <<"Unknown">>
+    _ -> <<"Unknown HTTP Status">>
   }
 }

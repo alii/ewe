@@ -1,4 +1,6 @@
-import ewe/internal/encoder
+// -----------------------------------------------------------------------------
+// IMPORTS
+// -----------------------------------------------------------------------------
 import gleam/bytes_tree
 import gleam/erlang/atom
 import gleam/erlang/process.{type Selector, type Subject}
@@ -10,14 +12,23 @@ import gleam/option.{type Option}
 import gleam/otp/actor
 import gleam/result
 import gleam/string_tree
+
 import glisten/socket.{type Socket}
 import glisten/socket/options.{ActiveMode, Once}
 import glisten/transport.{type Transport}
 
+import ewe/internal/encoder
+
+// -----------------------------------------------------------------------------
+// PUBLIC TYPES
+// -----------------------------------------------------------------------------
+
+// Represents a Server-Sent Events connection
 pub type SSEConnection {
   SSEConnection(transport: Transport, socket: Socket)
 }
 
+// Represents a Server-Sent Events event
 pub type SSEEvent {
   SSEEvent(
     event: Option(String),
@@ -27,26 +38,25 @@ pub type SSEEvent {
   )
 }
 
+// Represents an instruction on how Server-Sent Events connection should proceed
 pub type SSENext(user_state) {
   Continue(user_state)
   NormalStop
   AbnormalStop(reason: String)
 }
 
+// Represents a message that can be sent to or received from the Server-Sent 
+// Events connection
 pub type SSEMessages(user_message) {
   User(user_message)
   Close
 }
 
-fn create_socket_selector(
-  user_subject: Subject(user_message),
-) -> Selector(SSEMessages(user_message)) {
-  process.new_selector()
-  |> process.select_map(user_subject, fn(msg) { User(msg) })
-  |> process.select_record(atom.create("tcp_closed"), 1, fn(_) { Close })
-  |> process.select_record(atom.create("ssl_closed"), 1, fn(_) { Close })
-}
+// -----------------------------------------------------------------------------
+// PUBLIC API
+// -----------------------------------------------------------------------------
 
+/// Sends a response for a Server-Sent Events connection
 pub fn send_response(transport: Transport, socket: Socket) -> Result(Nil, Nil) {
   response.new(200)
   |> response.set_header("content-type", "text/event-stream")
@@ -57,6 +67,7 @@ pub fn send_response(transport: Transport, socket: Socket) -> Result(Nil, Nil) {
   |> result.replace_error(Nil)
 }
 
+/// Starts a new Server-Sent Events connection
 pub fn start(
   transport: Transport,
   socket: Socket,
@@ -111,6 +122,7 @@ pub fn start(
   })
 }
 
+/// Sends an event to the client
 pub fn send_event(
   transport: Transport,
   socket: Socket,
@@ -145,6 +157,21 @@ pub fn send_event(
   |> transport.send(transport, socket, _)
 }
 
+// -----------------------------------------------------------------------------
+// INTERNAL FUNCTIONS
+// -----------------------------------------------------------------------------
+
+/// Creates a selector for the Server-Sent Events connection
+fn create_socket_selector(
+  user_subject: Subject(user_message),
+) -> Selector(SSEMessages(user_message)) {
+  process.new_selector()
+  |> process.select_map(user_subject, fn(msg) { User(msg) })
+  |> process.select_record(atom.create("tcp_closed"), 1, fn(_) { Close })
+  |> process.select_record(atom.create("ssl_closed"), 1, fn(_) { Close })
+}
+
+/// Formats a field and value for a Server-Sent Events event
 fn format(field: String, value: String) {
   field <> ": " <> value <> "\n"
 }

@@ -42,6 +42,7 @@ pub type Packet {
 // DECODING
 // -----------------------------------------------------------------------------
 
+/// Decodes HTTP packets using external FFI implementation
 pub fn decode_packet(
   type_ type_: PacketType,
   buffer buffer: buffer.Buffer,

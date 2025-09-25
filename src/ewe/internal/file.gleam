@@ -20,10 +20,12 @@ pub type FileError {
   Eunknown(dynamic.Dynamic)
 }
 
+// Represents a file
 pub type File {
   File(descriptor: IoDevice, size: Int)
 }
 
+// Errors that can occur when sending a file
 pub type SendError {
   FileIssue(FileError)
   SocketIssue(glisten.SocketReason)
@@ -33,6 +35,7 @@ pub type SendError {
 // PUBLIC API
 // -----------------------------------------------------------------------------
 
+/// Sends a file to the client
 pub fn send(
   transport: Transport,
   socket: Socket,
