@@ -1,8 +1,12 @@
 import ewe
 import gleam/erlang/process
 import gleam/otp/static_supervisor as supervisor
+import logging
 
 pub fn main() -> Nil {
+  logging.configure()
+  logging.set_level(logging.Info)
+
   // Before running Autobahn tests, make sure to add this line to glisten/internal/acceptor.gleam:
   // Replace line 140:
   // |> supervisor.start

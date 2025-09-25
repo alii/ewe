@@ -5,6 +5,7 @@ import gleam/otp/actor
 import gleam/result
 import gleam/string
 import gleam/string_tree
+import logging
 
 type Message {
   Tick
@@ -41,7 +42,13 @@ pub fn stop(_state) {
 pub fn get_http_date() -> String {
   case lookup_http_date() {
     Ok(date) -> date
-    Error(Nil) -> calculate_http_date()
+    Error(Nil) -> {
+      logging.log(
+        logging.Warning,
+        "Failed to lookup HTTP date, calculating new one",
+      )
+      calculate_http_date()
+    }
   }
 }
 

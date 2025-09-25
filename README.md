@@ -17,6 +17,7 @@ gleam add ewe@1.0.0-rc2 gleam_erlang gleam_otp gleam_http gleam_yielder logging
 
 ```gleam
 import gleam/erlang/process
+import logging
 import gleam/http/response
 
 import ewe.{type Request, type Response}
@@ -28,6 +29,9 @@ fn handler(_req: Request) -> Response {
 }
 
 pub fn main() {
+  logging.configure()
+  logging.set_level(logging.Info)
+
   let assert Ok(_) =
     ewe.new(handler)
     |> ewe.bind_all()

@@ -104,6 +104,7 @@ import gleam/otp/supervision
 import gleam/result
 import gleam/string_tree.{type StringTree}
 import gleam/yielder
+import logging
 
 import glisten
 import glisten/internal/listener
@@ -407,7 +408,7 @@ pub fn new(handler: Handler) -> Builder {
         <> ":"
         <> int.to_string(server.port)
 
-      io.println("Listening on " <> url)
+      logging.log(logging.Info, "Listening on " <> url)
     },
     on_crash: response.new(500) |> response.set_body(Empty),
     listener_name: process.new_name("glisten_listener"),

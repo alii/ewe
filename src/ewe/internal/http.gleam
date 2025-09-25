@@ -36,7 +36,7 @@ import ewe/internal/encoder
 import ewe/internal/file
 
 // -----------------------------------------------------------------------------
-// TYPES
+// PUBLIC TYPES
 // -----------------------------------------------------------------------------
 
 // HTTP response body types
@@ -105,11 +105,17 @@ pub type UpgradeWebsocketError {
   MissingWebsocketKey
 }
 
+// Possible results of consuming some amount of data from the request body
 pub type Stream {
   Consumed(data: BitArray, next: fn(Int) -> Result(Stream, ParseError))
   Done
 }
 
+// -----------------------------------------------------------------------------
+// INTERNAL TYPES
+// -----------------------------------------------------------------------------
+
+// Function that reads `N` amount of bytes from the request body
 type Consumer =
   fn(Int) -> Result(Stream, ParseError)
 
@@ -120,6 +126,7 @@ type BodyChunk {
   FinalChunk(rest: Buffer)
 }
 
+// State of the chunked body parsing
 type ChunkedStreamState {
   ChunkedStreamState(data: Buffer, chunk: Buffer, done: Bool)
 }
@@ -586,6 +593,8 @@ pub fn handle_continue(req: Request(Connection)) -> Result(Nil, ParseError) {
 // BODY
 // -----------------------------------------------------------------------------
 
+/// Creates a consumer function that reads `N` amount of bytes from the request
+/// body until it is fully consumed
 fn do_stream_body(req: Request(Connection), buffer: Buffer) -> Consumer {
   fn(size: Int) {
     let buffer_size = bit_array.byte_size(buffer.data)
@@ -701,6 +710,8 @@ fn parse_body_chunk(buffer: Buffer) -> Result(BodyChunk, ParseError) {
   }
 }
 
+/// Creates a consumer function that reads `N` amount of bytes from the chunked 
+/// request body until it is fully consumed
 fn do_stream_body_chunked(
   req: Request(Connection),
   chunked_stream_state: ChunkedStreamState,
@@ -724,6 +735,7 @@ fn do_stream_body_chunked(
   }
 }
 
+/// Reads data from socket until `N` amount of bytes are read
 fn read_from_socket_until(
   transport transport: Transport,
   socket socket: Socket,
@@ -854,7 +866,6 @@ fn is_forbidden_trailer(field: String) -> Bool {
 // EXTERNAL FFI
 // -----------------------------------------------------------------------------
 
-/// Splits binary data using external Erlang binary:split
 @external(erlang, "binary", "split")
 fn split(
   subject: BitArray,

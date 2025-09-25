@@ -10,7 +10,9 @@ import gleam/http/response.{type Response, Response}
 import gleam/int
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 import gleam/yielder.{type Yielder}
+import logging
 
 import glisten
 import glisten/socket
@@ -25,19 +27,15 @@ import ewe/internal/http.{
 } as http_
 
 // -----------------------------------------------------------------------------
-// TYPES
+// PUBLIC TYPES
 // -----------------------------------------------------------------------------
 
-// Control flow for the handler loop
-type Next {
-  Continue(new_state: GlistenState)
-  Stop
-}
-
+// Custom message that can be sent to or received from the Glisten actor
 pub type GlistenMessage {
   IdleTimeout
 }
 
+// State of the Glisten actor
 pub type GlistenState {
   GlistenState(
     timer: Option(process.Timer),
@@ -46,9 +44,20 @@ pub type GlistenState {
 }
 
 // -----------------------------------------------------------------------------
+// INTERNAL TYPES
+// -----------------------------------------------------------------------------
+
+// Control flow for the handler loop
+type Next {
+  Continue(new_state: GlistenState)
+  Stop
+}
+
+// -----------------------------------------------------------------------------
 // PUBLIC API
 // -----------------------------------------------------------------------------
 
+/// Initializes the Glisten actor's state and selector for custom messages
 pub fn init(_) -> #(GlistenState, Option(process.Selector(GlistenMessage))) {
   let subject = process.new_subject()
   let selector =
@@ -96,6 +105,11 @@ pub fn loop(
               _ -> 400
             }
 
+            logging.log(
+              logging.Error,
+              "Received invalid request: " <> string.inspect(reason),
+            )
+
             let _ =
               response.new(status)
               |> response.set_body(bytes_tree.new())
@@ -125,8 +139,10 @@ fn call_handler(
 ) -> Next {
   let resp =
     exception.rescue(fn() { handler(req) })
-    |> result.map_error(fn(_e) {
-      on_crash |> response.set_header("connection", "close")
+    |> result.map_error(fn(e) {
+      logging.log(logging.Error, string.inspect(e))
+
+      response.set_header(on_crash, "connection", "close")
     })
     |> result.unwrap_both()
 

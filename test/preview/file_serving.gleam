@@ -1,4 +1,5 @@
 import gleam/erlang/process
+import logging
 
 import gleam/http/response
 import gleam/option.{None}
@@ -21,6 +22,9 @@ fn serve_file(path: String) -> Response {
 }
 
 pub fn main() {
+  logging.configure()
+  logging.set_level(logging.Info)
+
   let assert Ok(_) =
     ewe.new(fn(req) { serve_file(req.path) })
     |> ewe.bind_all()

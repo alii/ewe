@@ -1,4 +1,5 @@
 import gleam/erlang/process
+import logging
 
 import gleam/http/request
 import gleam/http/response
@@ -28,6 +29,9 @@ fn handle_echo(req: Request) -> Response {
 }
 
 pub fn main() {
+  logging.configure()
+  logging.set_level(logging.Info)
+
   let assert Ok(_) =
     ewe.new(handle_echo)
     |> ewe.bind_all()

@@ -1,5 +1,10 @@
 # Changelog
 
+# Unreleased
+
+- Improve internal comments
+- Add logging
+
 # v1.0.0-rc2
 
 - Rename internal imports

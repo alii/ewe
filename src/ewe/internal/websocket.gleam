@@ -11,6 +11,8 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
+import gleam/string
+import logging
 
 import glisten/socket.{type Socket, type SocketReason}
 import glisten/socket/options.{ActiveMode, Once}
@@ -153,6 +155,7 @@ fn glisten_selector() -> Selector(InternalMessage(user_message)) {
   |> process.select_record(atom.create("ssl_closed"), 1, fn(_) { Close })
 }
 
+/// Maps user selector to internal message
 fn user_selector(
   selector: Option(Selector(user_message)),
 ) -> Option(Selector(InternalMessage(user_message))) {
@@ -239,8 +242,6 @@ pub fn send_frame(
   deflate: Option(compression.Context),
   data: data,
 ) -> Result(Nil, SocketReason) {
-  // use <- time_function("send_frame_total")
-
   let frame =
     exception.rescue(fn() {
       encoder(data, deflate, option.None)
@@ -249,7 +250,14 @@ pub fn send_frame(
 
   case frame {
     Ok(frame) -> frame
-    Error(_) -> panic as non_owning_process
+    Error(reason) -> {
+      logging.log(
+        logging.Error,
+        "Frame should be sent from the WebSocket connection, but was sent from different process: "
+          <> string.inspect(reason),
+      )
+      panic as non_owning_process
+    }
   }
 }
 
@@ -295,6 +303,7 @@ fn handle_valid_packet(
   }
 }
 
+/// Handles frames processing
 fn handle_frames_processing(
   state: WebsocketState(user_state),
   conn: WebsocketConnection,
@@ -303,8 +312,6 @@ fn handle_frames_processing(
   handler: Handler(user_state, user_message),
   on_close: OnClose(user_state),
 ) {
-  // use <- time_function("handle_frames_processing")
-
   let frames = list.append(state.awaiting_frames, frames)
 
   let #(data_frames, control_frames) = separate_frames(frames, [], [])
@@ -379,6 +386,7 @@ fn handle_frames_processing(
   }
 }
 
+/// Separates frames into data and control frames
 fn separate_frames(
   frames: List(websocket.ParsedFrame),
   data_frames: List(websocket.ParsedFrame),
@@ -449,6 +457,7 @@ fn loop_by_frames(
     [websocket.Continuation(_, _), ..], Continue(_, _) -> {
       AbnormalStop("Unexpected continuation frame")
     }
+
     // Data frames
     [frame, ..rest], Continue(user_state, selector) -> {
       let call =
@@ -531,7 +540,13 @@ fn handle_close(
   on_close(conn, state.user_state)
 
   case abnormal_reason {
-    Some(reason) -> actor.stop_abnormal(reason)
+    Some(reason) -> {
+      logging.log(
+        logging.Error,
+        "WebSocket connection closed abnormally: " <> reason,
+      )
+      actor.stop_abnormal(reason)
+    }
     None -> actor.stop()
   }
 }

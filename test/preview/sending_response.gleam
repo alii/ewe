@@ -1,4 +1,5 @@
 import gleam/erlang/process
+import logging
 
 import gleam/crypto
 import gleam/http/request.{type Request}
@@ -32,6 +33,9 @@ fn handler(req: Request(Connection)) -> Response(ResponseBody) {
 }
 
 pub fn main() {
+  logging.configure()
+  logging.set_level(logging.Info)
+
   let assert Ok(_) =
     ewe.new(handler)
     |> ewe.bind_all()

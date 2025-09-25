@@ -1,8 +1,8 @@
 -module(ewe_ffi).
 
--export([decode_packet/3, rescue/1, validate_field_value/1, init_clock_storage/0,
-         set_http_date/1, lookup_http_date/0, now/0, now_microseconds/0,
-         open_file/1, close_file/1]).
+-export([close_file/1, decode_packet/3, init_clock_storage/0, lookup_http_date/0,
+         now/0, now_microseconds/0, open_file/1, rescue/1, set_http_date/1,
+         validate_field_value/1]).
 
 % -----------------------------------------------------------------------------
 % HTTP
