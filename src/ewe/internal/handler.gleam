@@ -137,14 +137,14 @@ fn call_handler(
   on_crash: Response(ResponseBody),
   idle_timeout: Int,
 ) -> Next {
-  let resp =
-    exception.rescue(fn() { handler(req) })
-    |> result.map_error(fn(e) {
+  let resp = case exception.rescue(fn() { handler(req) }) {
+    Ok(resp) -> resp
+    Error(e) -> {
       logging.log(logging.Error, string.inspect(e))
 
       response.set_header(on_crash, "connection", "close")
-    })
-    |> result.unwrap_both()
+    }
+  }
 
   case resp {
     Response(body: Websocket(selector), ..) | Response(body: SSE(selector), ..) -> {

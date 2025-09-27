@@ -4,6 +4,7 @@
 
 - Improve internal comments
 - Add logging
+- Remove deprecated `result.unwrap_both`
 
 # v1.0.0-rc2
 

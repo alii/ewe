@@ -96,7 +96,6 @@ import gleam/http
 import gleam/http/request.{type Request as HttpRequest}
 import gleam/http/response.{type Response as HttpResponse}
 import gleam/int
-import gleam/io
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/otp/static_supervisor.{type Supervisor} as supervisor
