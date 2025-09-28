@@ -120,3 +120,26 @@ pub fn idle_timeout_test() {
 
   Nil
 }
+
+pub fn gzip_test() {
+  let socket_address = server.start(server.echoer())
+  let ip = ewe.ip_address_to_string(socket_address.ip)
+  let port = int.to_string(socket_address.port)
+
+  let assert Ok(req) = request.to("http://" <> ip <> ":" <> port <> "/")
+
+  let req =
+    request.set_method(req, http.Post)
+    |> request.set_header("Host", "localhost:" <> port)
+    |> request.set_header("Content-Encoding", "gzip")
+    |> request.set_header("Content-Type", "text/plain; charset=utf-8")
+    |> request.set_header("Content-Length", "13")
+    |> request.set_body(<<"hello, world!">>)
+
+  let assert Ok(resp) = httpc.send_bits(req)
+
+  assert gunzip(resp.body) == <<"hello, world!">>
+}
+
+@external(erlang, "zlib", "gunzip")
+fn gunzip(data: BitArray) -> BitArray

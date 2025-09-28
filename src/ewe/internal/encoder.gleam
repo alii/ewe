@@ -12,12 +12,12 @@ import gleam/list
 
 /// Encodes an HTTP response into bytes
 pub fn encode_response(
-  response: response.Response(bytes_tree.BytesTree),
+  response: response.Response(BitArray),
 ) -> bytes_tree.BytesTree {
   bytes_tree.new()
   |> bytes_tree.append(encode_status_line(response.status))
   |> bytes_tree.append(encode_headers(response.headers))
-  |> bytes_tree.append_tree(response.body)
+  |> bytes_tree.append(response.body)
 }
 
 pub fn setup_encoded_response(

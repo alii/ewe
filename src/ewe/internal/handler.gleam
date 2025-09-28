@@ -11,6 +11,7 @@ import gleam/int
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import gleam/string_tree
 import gleam/yielder.{type Yielder}
 import logging
 
@@ -112,7 +113,7 @@ pub fn loop(
 
             let _ =
               response.new(status)
-              |> response.set_body(bytes_tree.new())
+              |> response.set_body(<<>>)
               |> response.set_header("connection", "close")
               |> encoder.encode_response()
               |> transport.send(http_conn.transport, http_conn.socket, _)
@@ -191,7 +192,7 @@ fn handle_resp_file(
   }
 
   let sent =
-    response.set_body(resp, bytes_tree.new())
+    response.set_body(resp, <<>>)
     |> http_.append_default_headers(req, http_version)
     |> encoder.setup_encoded_response()
     |> transport.send(req.body.transport, req.body.socket, _)
@@ -220,7 +221,7 @@ fn handle_resp_chunked(
     Error(_) -> response.set_header(resp, "transfer-encoding", "chunked")
   }
 
-  response.set_body(resp, bytes_tree.new())
+  response.set_body(resp, <<>>)
   |> http_.append_default_headers(req, http_version)
   |> encoder.setup_encoded_response()
   |> transport.send(req.body.transport, req.body.socket, _)
@@ -251,17 +252,43 @@ fn handle_resp_body(
 ) -> Result(Nil, glisten.SocketReason) {
   let assert option.Some(http_version) = req.body.http_version
 
-  let bytes = case body {
-    TextData(text) -> bytes_tree.from_string(text)
-    StringTreeData(string_tree) -> bytes_tree.from_string_tree(string_tree)
-    BitsData(bits) -> bytes_tree.from_bit_array(bits)
-    BytesData(bytes) -> bytes
-    Empty -> bytes_tree.new()
+  let bits = case body {
+    TextData(text) -> bit_array.from_string(text)
+    StringTreeData(string_tree) ->
+      string_tree.to_string(string_tree) |> bit_array.from_string
+    BitsData(bits) -> bits
+    BytesData(bytes) -> bytes_tree.to_bit_array(bytes)
+    Empty -> <<>>
     _ -> panic
   }
 
-  response.set_body(resp, bytes)
-  |> http_.append_default_headers(req, http_version)
+  let req_gzip_encoding =
+    request.get_header(req, "content-encoding")
+    |> result.map(string.contains(_, "gzip"))
+
+  let encode = case
+    req_gzip_encoding,
+    response.get_header(resp, "content-encoding")
+  {
+    Ok(True), Error(_) -> True
+    _, _ -> False
+  }
+
+  let resp = case encode {
+    True -> {
+      response.get_header(resp, "content-type")
+      |> result.try(string.split_once(_, ";"))
+      |> result.map(fn(parts) {
+        response.set_header(resp, "content-type", parts.0)
+      })
+      |> result.unwrap(resp)
+      |> response.set_header("content-encoding", "gzip")
+      |> response.set_body(gzip(bits))
+    }
+    _ -> response.set_body(resp, bits)
+  }
+
+  http_.append_default_headers(resp, req, http_version)
   |> encoder.encode_response()
   |> transport.send(req.body.transport, req.body.socket, _)
 }
@@ -279,3 +306,6 @@ fn to_hex_string(integer: Int) -> String {
 
 @external(erlang, "erlang", "integer_to_list")
 fn integer_to_list(integer: Int, base: Int) -> String
+
+@external(erlang, "zlib", "gzip")
+fn gzip(data: BitArray) -> BitArray

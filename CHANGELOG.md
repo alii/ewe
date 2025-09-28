@@ -5,6 +5,7 @@
 - Improve internal comments
 - Add logging
 - Remove deprecated `result.unwrap_both`
+- Partial support for `gzip` content encoding.
 
 # v1.0.0-rc2
 

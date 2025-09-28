@@ -383,7 +383,7 @@ pub fn upgrade_websocket(
 
   let resp =
     response.new(101)
-    |> response.set_body(bytes_tree.new())
+    |> response.set_body(<<>>)
     |> response.set_header("connection", "upgrade")
     |> response.set_header("upgrade", "websocket")
     |> response.set_header("sec-websocket-accept", accept_key)
@@ -408,16 +408,16 @@ pub fn upgrade_websocket(
 
 /// Appends default headers to HTTP responses
 pub fn append_default_headers(
-  resp: Response(BytesTree),
+  resp: Response(BitArray),
   req: Request(Connection),
   version: HttpVersion,
-) -> Response(BytesTree) {
+) -> Response(BitArray) {
   let set_close = request.get_header(req, "connection") == Ok("close")
 
   let resp = case response.get_header(resp, "content-length") {
     Ok(_) -> resp
     Error(Nil) -> {
-      let body_size = bytes_tree.byte_size(resp.body) |> int.to_string
+      let body_size = bit_array.byte_size(resp.body) |> int.to_string
       response.set_header(resp, "content-length", body_size)
     }
   }
@@ -580,7 +580,7 @@ pub fn handle_continue(req: Request(Connection)) -> Result(Nil, ParseError) {
   case expect {
     Ok(_) -> {
       response.new(100)
-      |> response.set_body(bytes_tree.new())
+      |> response.set_body(<<>>)
       |> encoder.encode_response()
       |> transport.send(req.body.transport, req.body.socket, _)
       |> result.replace_error(MalformedRequest)
