@@ -5,7 +5,7 @@
 - Improve internal comments
 - Add logging
 - Remove deprecated `result.unwrap_both`
-- Partial support for `gzip` content encoding.
+- Support for automatic `gzip` content encoding for HTTP responses except file sending. 
 
 # v1.0.0-rc2
 

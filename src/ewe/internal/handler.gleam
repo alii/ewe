@@ -1,6 +1,7 @@
 // -----------------------------------------------------------------------------
 // IMPORTS
 // -----------------------------------------------------------------------------
+import compresso
 import ewe/internal/file
 import gleam/bit_array
 import gleam/bytes_tree
@@ -25,7 +26,7 @@ import ewe/internal/exception
 import ewe/internal/http.{
   type Connection, type ResponseBody, BitsData, BytesData, ChunkedData, Empty,
   File, SSE, StringTreeData, TextData, Websocket,
-} as http_
+} as ewe_http
 
 // -----------------------------------------------------------------------------
 // PUBLIC TYPES
@@ -87,9 +88,9 @@ pub fn loop(
           None -> process.TimerNotFound
         }
 
-        let http_conn = http_.transform_connection(conn)
+        let http_conn = ewe_http.transform_connection(conn)
 
-        let parsed = http_.parse_request(http_conn, buffer.new(msg))
+        let parsed = ewe_http.parse_request(http_conn, buffer.new(msg))
 
         case parsed {
           Ok(req) ->
@@ -102,7 +103,7 @@ pub fn loop(
 
           Error(reason) -> {
             let status = case reason {
-              http_.InvalidVersion -> 505
+              ewe_http.InvalidVersion -> 505
               _ -> 400
             }
 
@@ -193,7 +194,7 @@ fn handle_resp_file(
 
   let sent =
     response.set_body(resp, <<>>)
-    |> http_.append_default_headers(req, http_version)
+    |> ewe_http.append_default_headers(req, http_version)
     |> encoder.setup_encoded_response()
     |> transport.send(req.body.transport, req.body.socket, _)
     |> result.try(fn(_) {
@@ -221,8 +222,19 @@ fn handle_resp_chunked(
     Error(_) -> response.set_header(resp, "transfer-encoding", "chunked")
   }
 
+  let #(resp, yielder) = case encode_gzip(req, resp) {
+    True -> {
+      let resp =
+        remove_charset(resp)
+        |> response.set_header("content-encoding", "gzip")
+
+      #(resp, compresso.gzip_yielder(yielder))
+    }
+    _ -> #(resp, yielder)
+  }
+
   response.set_body(resp, <<>>)
-  |> http_.append_default_headers(req, http_version)
+  |> ewe_http.append_default_headers(req, http_version)
   |> encoder.setup_encoded_response()
   |> transport.send(req.body.transport, req.body.socket, _)
   |> result.try(fn(_) {
@@ -262,35 +274,38 @@ fn handle_resp_body(
     _ -> panic
   }
 
-  let req_gzip_encoding =
-    request.get_header(req, "content-encoding")
-    |> result.map(string.contains(_, "gzip"))
-
-  let encode = case
-    req_gzip_encoding,
-    response.get_header(resp, "content-encoding")
-  {
-    Ok(True), Error(_) -> True
-    _, _ -> False
-  }
-
-  let resp = case encode {
+  let resp = case encode_gzip(req, resp) {
     True -> {
-      response.get_header(resp, "content-type")
-      |> result.try(string.split_once(_, ";"))
-      |> result.map(fn(parts) {
-        response.set_header(resp, "content-type", parts.0)
-      })
-      |> result.unwrap(resp)
+      remove_charset(resp)
       |> response.set_header("content-encoding", "gzip")
-      |> response.set_body(gzip(bits))
+      |> response.set_body(compresso.gzip(bits))
     }
     _ -> response.set_body(resp, bits)
   }
 
-  http_.append_default_headers(resp, req, http_version)
+  ewe_http.append_default_headers(resp, req, http_version)
   |> encoder.encode_response()
   |> transport.send(req.body.transport, req.body.socket, _)
+}
+
+fn encode_gzip(req: Request(ewe_http.Connection), resp: Response(a)) -> Bool {
+  let req =
+    request.get_header(req, "accept-encoding")
+    |> result.map(string.contains(_, "gzip"))
+
+  let resp = response.get_header(resp, "content-encoding")
+
+  case req, resp {
+    Ok(True), Error(Nil) -> True
+    _, _ -> False
+  }
+}
+
+fn remove_charset(resp: Response(a)) -> Response(a) {
+  response.get_header(resp, "content-type")
+  |> result.try(string.split_once(_, ";"))
+  |> result.map(fn(parts) { response.set_header(resp, "content-type", parts.0) })
+  |> result.unwrap(resp)
 }
 
 fn is_connection_close(resp: Response(a)) -> Bool {
@@ -306,6 +321,3 @@ fn to_hex_string(integer: Int) -> String {
 
 @external(erlang, "erlang", "integer_to_list")
 fn integer_to_list(integer: Int, base: Int) -> String
-
-@external(erlang, "zlib", "gzip")
-fn gzip(data: BitArray) -> BitArray

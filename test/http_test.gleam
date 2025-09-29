@@ -131,7 +131,7 @@ pub fn gzip_test() {
   let req =
     request.set_method(req, http.Post)
     |> request.set_header("Host", "localhost:" <> port)
-    |> request.set_header("Content-Encoding", "gzip")
+    |> request.set_header("Accept-Encoding", "gzip, deflate, br")
     |> request.set_header("Content-Type", "text/plain; charset=utf-8")
     |> request.set_header("Content-Length", "13")
     |> request.set_body(<<"hello, world!">>)
