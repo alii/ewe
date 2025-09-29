@@ -408,19 +408,11 @@ pub fn upgrade_websocket(
 
 /// Appends default headers to HTTP responses
 pub fn append_default_headers(
-  resp: Response(BitArray),
+  resp: Response(a),
   req: Request(Connection),
   version: HttpVersion,
-) -> Response(BitArray) {
+) -> Response(a) {
   let set_close = request.get_header(req, "connection") == Ok("close")
-
-  let resp = case response.get_header(resp, "content-length") {
-    Ok(_) -> resp
-    Error(Nil) -> {
-      let body_size = bit_array.byte_size(resp.body) |> int.to_string
-      response.set_header(resp, "content-length", body_size)
-    }
-  }
 
   let resp = case response.get_header(resp, "date") {
     Ok(_) -> resp
@@ -435,6 +427,16 @@ pub fn append_default_headers(
         Ok(_) -> resp
         Error(Nil) -> response.set_header(resp, "connection", "keep-alive")
       }
+  }
+}
+
+pub fn set_content_length(resp: Response(BitArray)) -> Response(BitArray) {
+  case response.get_header(resp, "content-length") {
+    Ok(_) -> resp
+    Error(Nil) -> {
+      let body_size = bit_array.byte_size(resp.body) |> int.to_string
+      response.set_header(resp, "content-length", body_size)
+    }
   }
 }
 

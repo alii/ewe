@@ -193,8 +193,7 @@ fn handle_resp_file(
   }
 
   let sent =
-    response.set_body(resp, <<>>)
-    |> ewe_http.append_default_headers(req, http_version)
+    ewe_http.append_default_headers(resp, req, http_version)
     |> encoder.setup_encoded_response()
     |> transport.send(req.body.transport, req.body.socket, _)
     |> result.try(fn(_) {
@@ -233,8 +232,7 @@ fn handle_resp_chunked(
     _ -> #(resp, yielder)
   }
 
-  response.set_body(resp, <<>>)
-  |> ewe_http.append_default_headers(req, http_version)
+  ewe_http.append_default_headers(resp, req, http_version)
   |> encoder.setup_encoded_response()
   |> transport.send(req.body.transport, req.body.socket, _)
   |> result.try(fn(_) {
@@ -274,13 +272,27 @@ fn handle_resp_body(
     _ -> panic
   }
 
-  let resp = case encode_gzip(req, resp) {
-    True -> {
-      remove_charset(resp)
-      |> response.set_header("content-encoding", "gzip")
-      |> response.set_body(compresso.gzip(bits))
-    }
-    _ -> response.set_body(resp, bits)
+  let content_length = bit_array.byte_size(bits)
+
+  let resp = case content_length > 1024 {
+    True ->
+      case encode_gzip(req, resp) {
+        True -> {
+          remove_charset(resp)
+          |> response.set_header("content-encoding", "gzip")
+          |> response.set_header("vary", "Accept-Encoding")
+          |> response.set_body(compresso.gzip(bits))
+        }
+        _ ->
+          response.set_body(resp, bits)
+          |> response.set_header(
+            "content-length",
+            int.to_string(content_length),
+          )
+      }
+    False ->
+      response.set_body(resp, bits)
+      |> response.set_header("content-length", int.to_string(content_length))
   }
 
   ewe_http.append_default_headers(resp, req, http_version)
