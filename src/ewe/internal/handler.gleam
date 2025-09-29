@@ -278,10 +278,17 @@ fn handle_resp_body(
     True ->
       case encode_gzip(req, resp) {
         True -> {
+          let compressed = compresso.gzip(bits)
+          let content_length = bit_array.byte_size(compressed)
+
           remove_charset(resp)
           |> response.set_header("content-encoding", "gzip")
           |> response.set_header("vary", "Accept-Encoding")
-          |> response.set_body(compresso.gzip(bits))
+          |> response.set_header(
+            "content-length",
+            int.to_string(content_length),
+          )
+          |> response.set_body(compressed)
         }
         _ ->
           response.set_body(resp, bits)

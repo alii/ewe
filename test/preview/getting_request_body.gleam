@@ -12,7 +12,7 @@ fn handle_echo(req: Request) -> Response {
     request.get_header(req, "content-type")
     |> result.unwrap("application/octet-stream")
 
-  case ewe.read_body(req, 1024) {
+  case ewe.read_body(req, 10_240) {
     Ok(req) ->
       response.new(200)
       |> response.set_header("content-type", content_type)
