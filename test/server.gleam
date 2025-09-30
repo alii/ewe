@@ -24,7 +24,7 @@ pub fn echoer() {
       request.get_header(req, "content-type")
       |> result.unwrap("text/plain")
 
-    case ewe.read_body(req, 1024) {
+    case ewe.read_body(req, 10_240) {
       Ok(req) -> {
         ewe.BitsData(req.body)
         |> response.set_body(response.new(200), _)

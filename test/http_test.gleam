@@ -13,6 +13,8 @@ import glisten/socket
 import glisten/tcp
 import server
 
+const quote = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
+
 pub fn simple_request_test() {
   let socket_address = server.start(server.hi())
   let ip = ewe.ip_address_to_string(socket_address.ip)
@@ -128,17 +130,20 @@ pub fn gzip_test() {
 
   let assert Ok(req) = request.to("http://" <> ip <> ":" <> port <> "/")
 
+  let quote = string.repeat(quote, 10)
+  let quote_length = int.to_string(string.byte_size(quote))
+
   let req =
     request.set_method(req, http.Post)
     |> request.set_header("Host", "localhost:" <> port)
     |> request.set_header("Accept-Encoding", "gzip, deflate, br")
     |> request.set_header("Content-Type", "text/plain; charset=utf-8")
-    |> request.set_header("Content-Length", "13")
-    |> request.set_body(<<"hello, world!">>)
+    |> request.set_header("Content-Length", quote_length)
+    |> request.set_body(<<quote:utf8>>)
 
   let assert Ok(resp) = httpc.send_bits(req)
 
-  assert gunzip(resp.body) == <<"hello, world!">>
+  assert gunzip(resp.body) == <<quote:utf8>>
 }
 
 @external(erlang, "zlib", "gunzip")
