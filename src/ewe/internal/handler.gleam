@@ -227,7 +227,7 @@ fn handle_resp_chunked(
         remove_charset(resp)
         |> response.set_header("content-encoding", "gzip")
 
-      #(resp, compresso.gzip_yielder(yielder))
+      #(resp, compresso.gzip_deflate_yielder(yielder))
     }
     _ -> #(resp, yielder)
   }
@@ -278,17 +278,26 @@ fn handle_resp_body(
     True ->
       case encode_gzip(req, resp) {
         True -> {
-          let compressed = compresso.gzip(bits)
-          let content_length = bit_array.byte_size(compressed)
+          case compresso.gzip_deflate(bits) {
+            Ok(compressed) -> {
+              let content_length = bit_array.byte_size(compressed)
 
-          remove_charset(resp)
-          |> response.set_header("content-encoding", "gzip")
-          |> response.set_header("vary", "Accept-Encoding")
-          |> response.set_header(
-            "content-length",
-            int.to_string(content_length),
-          )
-          |> response.set_body(compressed)
+              remove_charset(resp)
+              |> response.set_header("content-encoding", "gzip")
+              |> response.set_header("vary", "Accept-Encoding")
+              |> response.set_header(
+                "content-length",
+                int.to_string(content_length),
+              )
+              |> response.set_body(compressed)
+            }
+            Error(Nil) ->
+              response.set_body(resp, bits)
+              |> response.set_header(
+                "content-length",
+                int.to_string(content_length),
+              )
+          }
         }
         _ ->
           response.set_body(resp, bits)
