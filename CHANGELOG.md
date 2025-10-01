@@ -1,5 +1,9 @@
 # Changelog
 
+# v1.0.1
+
+- Ensure `compresso` package is fixed version
+
 # v1.0.0
 
 - Improve internal comments
