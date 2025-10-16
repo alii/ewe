@@ -15,7 +15,6 @@ import gleam/string
 import gleam/string_tree
 import gleam/yielder.{type Yielder}
 import logging
-import spectator
 
 import glisten
 import glisten/socket
@@ -62,7 +61,6 @@ type Next {
 
 /// Initializes the Glisten actor's state and selector for custom messages
 pub fn init(_) -> #(GlistenState, Option(process.Selector(GlistenMessage))) {
-  spectator.tag(process.self(), "glisten_handler")
   let subject = process.new_subject()
   let selector =
     process.new_selector()
