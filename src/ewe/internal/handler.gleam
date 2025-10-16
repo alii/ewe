@@ -15,6 +15,7 @@ import gleam/string
 import gleam/string_tree
 import gleam/yielder.{type Yielder}
 import logging
+import spectator
 
 import glisten
 import glisten/socket
@@ -61,6 +62,7 @@ type Next {
 
 /// Initializes the Glisten actor's state and selector for custom messages
 pub fn init(_) -> #(GlistenState, Option(process.Selector(GlistenMessage))) {
+  spectator.tag(process.self(), "glisten_handler")
   let subject = process.new_subject()
   let selector =
     process.new_selector()
@@ -98,7 +100,9 @@ pub fn loop(
               call_handler(req, state.subject, handler, on_crash, idle_timeout)
             {
               Continue(new_state) -> glisten.continue(new_state)
-              Stop -> glisten.stop()
+              Stop -> {
+                glisten.stop()
+              }
             }
 
           Error(reason) -> {
@@ -149,8 +153,11 @@ fn call_handler(
   }
 
   case resp {
-    Response(body: Websocket(selector), ..) | Response(body: SSE(selector), ..) -> {
-      let _ = process.selector_receive_forever(selector)
+    Response(body: Websocket(_selector), ..)
+    | Response(body: SSE(_selector), ..) -> {
+      // NOTE: don't receive forever for now, as the connection is handed off 
+      // to actors. 
+      // let _ = process.selector_receive_forever(selector)
       Stop
     }
     Response(body:, ..) -> {
