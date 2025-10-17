@@ -102,7 +102,6 @@ import gleam/otp/static_supervisor.{type Supervisor} as supervisor
 import gleam/otp/supervision
 import gleam/result
 import gleam/string_tree.{type StringTree}
-import gleam/yielder
 import logging
 
 import glisten
@@ -116,6 +115,7 @@ import ewe/internal/gramps/websocket as ws
 import ewe/internal/file
 import ewe/internal/handler
 import ewe/internal/http as ewe_http
+import ewe/internal/response_chunked as ewe_chunked
 import ewe/internal/sse as ewe_sse
 import ewe/internal/websocket as ewe_ws
 
@@ -242,15 +242,14 @@ pub type ResponseBody {
   ///
   Empty
 
-  /// Allows to send response body in chunks with `chunked` transfer encoding.
-  ///
-  ChunkedData(yielder.Yielder(BitArray))
-
   /// Allows to set response body from a file more efficiently rather than
   /// sending contents in regular data types.
   ///
   File(descriptor: file.IoDevice, offset: Int, size: Int)
 
+  /// Allows to send response body in chunks with `chunked` transfer encoding.
+  ///
+  ChunkedData(MonitorSelector)
   /// Allows upgrading request to a WebSocket connection.
   ///
   Websocket(MonitorSelector)
@@ -281,7 +280,7 @@ fn transform_response_body(
     BitsData(bits) -> ewe_http.BitsData(bits)
     StringTreeData(string_tree) -> ewe_http.StringTreeData(string_tree)
 
-    ChunkedData(yielder) -> ewe_http.ChunkedData(yielder)
+    ChunkedData(MonitorSelector(selector)) -> ewe_http.ChunkedData(selector)
     File(descriptor, offset, size) -> ewe_http.File(descriptor, offset, size)
 
     Websocket(MonitorSelector(selector)) -> ewe_http.Websocket(selector)
@@ -647,6 +646,78 @@ fn consumer_adapter(
       Error(_) -> Error(InvalidBody)
     }
   }
+}
+
+// -----------------------------------------------------------------------------
+// Chunked Response Body
+// -----------------------------------------------------------------------------
+
+pub type ChunkedBody =
+  ewe_chunked.ChunkedBody
+
+pub opaque type ChunkedNext(user_state) {
+  ChunkedContinue(user_state)
+  ChunkedStop
+  ChunkedAbnormalStop(reason: String)
+}
+
+pub fn chunked_continue(user_state: user_state) -> ChunkedNext(user_state) {
+  ChunkedContinue(user_state)
+}
+
+pub fn chunked_stop() -> ChunkedNext(user_state) {
+  ChunkedStop
+}
+
+pub fn chunked_stop_abnormal(reason: String) -> ChunkedNext(user_state) {
+  ChunkedAbnormalStop(reason)
+}
+
+fn to_internal_chunked_next(
+  next: ChunkedNext(user_state),
+) -> ewe_chunked.ChunkedNext(user_state) {
+  case next {
+    ChunkedContinue(user_state) -> ewe_chunked.Continue(user_state)
+    ChunkedStop -> ewe_chunked.NormalStop
+    ChunkedAbnormalStop(reason) -> ewe_chunked.AbnormalStop(reason)
+  }
+}
+
+pub fn chunked_body(
+  req: Request,
+  resp: HttpResponse(a),
+  on_init on_init: fn(Subject(user_message)) -> user_state,
+  handler handler: fn(ChunkedBody, user_state, user_message) ->
+    ChunkedNext(user_state),
+  on_close on_close: fn(ChunkedBody, user_state) -> Nil,
+) -> Response {
+  let handler = fn(conn, state, msg) {
+    handler(conn, state, msg)
+    |> to_internal_chunked_next()
+  }
+
+  let transport = req.body.transport
+  let socket = req.body.socket
+
+  case ewe_chunked.send_response(resp, transport, socket) {
+    Ok(Nil) -> {
+      case ewe_chunked.start(transport, socket, on_init, handler, on_close) {
+        Ok(selector) -> {
+          response.new(200)
+          |> response.set_body(ChunkedData(MonitorSelector(selector)))
+        }
+        Error(_) -> response.new(400) |> response.set_body(Empty)
+      }
+    }
+    Error(Nil) -> response.new(400) |> response.set_body(Empty)
+  }
+}
+
+pub fn send_chunk(
+  conn: ChunkedBody,
+  chunk: BitArray,
+) -> Result(Nil, glisten.SocketReason) {
+  ewe_chunked.send_chunk(conn.transport, conn.socket, chunk)
 }
 
 // -----------------------------------------------------------------------------

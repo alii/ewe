@@ -13,7 +13,6 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import gleam/string_tree
-import gleam/yielder.{type Yielder}
 import logging
 
 import glisten
@@ -152,7 +151,8 @@ fn call_handler(
 
   case resp {
     Response(body: Websocket(_selector), ..)
-    | Response(body: SSE(_selector), ..) -> {
+    | Response(body: SSE(_selector), ..)
+    | Response(body: ChunkedData(_selector), ..) -> {
       // NOTE: don't receive forever for now, as the connection is handed off 
       // to actors. 
       // let _ = process.selector_receive_forever(selector)
@@ -162,7 +162,6 @@ fn call_handler(
       let sent = case body {
         File(descriptor, offset, size) ->
           handle_resp_file(req, resp, descriptor, offset, size)
-        ChunkedData(yielder) -> handle_resp_chunked(req, resp, yielder)
         _ -> handle_resp_body(req, resp, body)
       }
 
@@ -209,54 +208,6 @@ fn handle_resp_file(
   let _ = file.close(descriptor)
 
   sent
-}
-
-/// Handles the chunked response body and sends it to the client
-fn handle_resp_chunked(
-  req: Request(Connection),
-  resp: Response(ResponseBody),
-  yielder: Yielder(BitArray),
-) -> Result(Nil, glisten.SocketReason) {
-  let assert option.Some(http_version) = req.body.http_version
-
-  let resp = case response.get_header(resp, "transfer-encoding") {
-    Ok("chunked") -> resp
-    // TODO: handle this?
-    Ok(_) -> resp
-    Error(_) -> response.set_header(resp, "transfer-encoding", "chunked")
-  }
-
-  let #(resp, yielder) = case encode_gzip(req, resp) {
-    True -> {
-      let resp =
-        remove_charset(resp)
-        |> response.set_header("content-encoding", "gzip")
-
-      #(resp, compresso.gzip_yielder(yielder))
-    }
-    _ -> #(resp, yielder)
-  }
-
-  ewe_http.append_default_headers(resp, req, http_version)
-  |> encoder.setup_encoded_response()
-  |> transport.send(req.body.transport, req.body.socket, _)
-  |> result.try(fn(_) {
-    yielder.try_fold(yielder, Nil, fn(_, chunk) {
-      bytes_tree.new()
-      |> bytes_tree.append_string(to_hex_string(bit_array.byte_size(chunk)))
-      |> bytes_tree.append(<<"\r\n">>)
-      |> bytes_tree.append(chunk)
-      |> bytes_tree.append(<<"\r\n">>)
-      |> transport.send(req.body.transport, req.body.socket, _)
-    })
-    |> result.try(fn(_) {
-      transport.send(
-        req.body.transport,
-        req.body.socket,
-        bytes_tree.from_bit_array(<<"0\r\n\r\n">>),
-      )
-    })
-  })
 }
 
 /// Handles the response body and sends it to the client
@@ -338,10 +289,3 @@ fn is_connection_close(resp: Response(a)) -> Bool {
     _ -> False
   }
 }
-
-fn to_hex_string(integer: Int) -> String {
-  integer_to_list(integer, 16)
-}
-
-@external(erlang, "erlang", "integer_to_list")
-fn integer_to_list(integer: Int, base: Int) -> String

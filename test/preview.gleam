@@ -13,7 +13,6 @@ import gleam/otp/static_supervisor as supervisor
 import gleam/otp/supervision.{type ChildSpecification}
 import gleam/result
 import gleam/string
-import gleam/yielder
 import logging
 
 import ewe.{type Request, type Response}
@@ -174,10 +173,10 @@ fn handler(req: Request, pubsub: Subject(PubSubMessage)) -> Response {
 
     // POST /echo - Echo back the request body
     ["echo"] -> handle_echo(req)
+
     // POST /stream/:chunk_size - Stream and echo back the request body in chunks
     ["stream", chunk_size] ->
       handle_stream(req, int.parse(chunk_size) |> result.unwrap(16))
-
     // GET /file/:path - Serve a file from the public directory
     ["file", path] -> serve_file(path)
 
@@ -270,6 +269,39 @@ fn handle_echo(req: Request) -> Response {
   }
 }
 
+pub type StreamMessage {
+  Chunk(BitArray)
+  Done
+  BodyError(ewe.BodyError)
+}
+
+fn stream_resource(
+  consumer: ewe.Consumer,
+  subject: Subject(StreamMessage),
+  chunk_size: Int,
+) -> Nil {
+  process.sleep(int.random(250))
+  case consumer(chunk_size) {
+    Ok(ewe.Consumed(data, next)) -> {
+      logging.log(logging.Info, {
+        "Consumed "
+        <> int.to_string(bit_array.byte_size(data))
+        <> " bytes: "
+        <> string.inspect(data)
+      })
+
+      process.send(subject, Chunk(data))
+      stream_resource(next, subject, chunk_size)
+    }
+    Ok(ewe.Done) -> {
+      process.send(subject, Done)
+    }
+    Error(body_error) -> {
+      process.send(subject, BodyError(body_error))
+    }
+  }
+}
+
 fn handle_stream(req: Request, chunk_size: Int) -> Response {
   let content_type =
     request.get_header(req, "content-type")
@@ -277,26 +309,30 @@ fn handle_stream(req: Request, chunk_size: Int) -> Response {
 
   case ewe.stream_body(req) {
     Ok(consumer) -> {
-      let yielder =
-        yielder.unfold(consumer, fn(consumer) {
-          case consumer(chunk_size) {
-            Ok(ewe.Consumed(data, next)) -> {
-              logging.log(logging.Info, {
-                "Consumed "
-                <> int.to_string(bit_array.byte_size(data))
-                <> " bytes: "
-                <> string.inspect(data)
-              })
+      ewe.chunked_body(
+        req,
+        response.new(200) |> response.set_header("content-type", content_type),
+        on_init: fn(subject) {
+          process.spawn(fn() { stream_resource(consumer, subject, chunk_size) })
 
-              yielder.Next(data, next)
-            }
-            Ok(ewe.Done) | Error(_) -> yielder.Done
+          Nil
+        },
+        handler: fn(chunked_body, state, message) {
+          case message {
+            Chunk(data) ->
+              case ewe.send_chunk(chunked_body, data) {
+                Ok(Nil) -> ewe.chunked_continue(state)
+                Error(_) -> ewe.chunked_stop_abnormal("Failed to send chunk")
+              }
+            Done -> ewe.chunked_stop()
+            BodyError(body_error) ->
+              ewe.chunked_stop_abnormal(string.inspect(body_error))
           }
-        })
-
-      response.new(200)
-      |> response.set_header("content-type", content_type)
-      |> response.set_body(ewe.ChunkedData(yielder))
+        },
+        on_close: fn(_conn, _state) {
+          logging.log(logging.Info, "Stream closed")
+        },
+      )
     }
     Error(_) ->
       response.new(400)

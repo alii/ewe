@@ -143,7 +143,7 @@ fn select_valid_record(
 }
 
 /// Creates selector for glisten socket events
-fn glisten_selector() -> Selector(InternalMessage(user_message)) {
+fn create_socket_selector() -> Selector(InternalMessage(user_message)) {
   process.new_selector()
   // https://github.com/rawhat/glisten/blob/master/src/glisten/internal/handler.gleam#L121
   |> select_valid_record("tcp")
@@ -199,7 +199,7 @@ pub fn start(
 
     let selector =
       process.map_selector(user_selector, User)
-      |> process.merge_selector(glisten_selector())
+      |> process.merge_selector(create_socket_selector())
 
     let ws_state =
       WebsocketState(
@@ -470,7 +470,7 @@ fn loop_by_frames(
           let next_selector =
             user_selector(new_selector)
             |> option.or(selector)
-            |> option.map(process.merge_selector(glisten_selector(), _))
+            |> option.map(process.merge_selector(create_socket_selector(), _))
 
           loop_by_frames(
             rest,
@@ -504,7 +504,7 @@ fn handle_user_message(
     Ok(Continue(new_user_state, new_selector)) -> {
       let next_selector =
         user_selector(new_selector)
-        |> option.map(process.merge_selector(glisten_selector(), _))
+        |> option.map(process.merge_selector(create_socket_selector(), _))
 
       let next =
         actor.continue(WebsocketState(..state, user_state: new_user_state))
