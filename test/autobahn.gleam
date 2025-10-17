@@ -7,6 +7,8 @@ pub fn main() -> Nil {
   logging.configure()
   logging.set_level(logging.Info)
 
+  // spectator.start()
+
   // Before running Autobahn tests, make sure to add this line to glisten/internal/acceptor.gleam:
   // Replace line 140:
   // |> supervisor.start

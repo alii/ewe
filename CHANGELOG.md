@@ -1,5 +1,9 @@
 # Changelog
 
+# Unreleased
+
+- Change API of chunked response to match other streaming APIs
+
 # v1.0.1
 
 - Ensure `compresso` package is fixed version
