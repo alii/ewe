@@ -9,13 +9,6 @@ pub fn main() -> Nil {
 
   // spectator.start()
 
-  // Before running Autobahn tests, make sure to add this line to glisten/internal/acceptor.gleam:
-  // Replace line 140:
-  // |> supervisor.start
-  // With:
-  // |> supervisor.restart_tolerance(intensity: 1_000_000, period: 1_000_000)
-  // |> supervisor.start
-
   let ewe_server =
     ewe.new(fn(req) {
       ewe.upgrade_websocket(

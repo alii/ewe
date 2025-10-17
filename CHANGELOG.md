@@ -3,6 +3,7 @@
 # Unreleased
 
 - Change API of chunked response to match other streaming APIs
+- Remove `process.selector_receive_forever` so that handler process is not waiting until streaming actors are done
 
 # v1.0.1
 
