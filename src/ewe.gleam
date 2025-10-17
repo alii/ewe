@@ -104,6 +104,7 @@ import gleam/http/response.{type Response as HttpResponse}
 import gleam/int
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/otp/factory_supervisor as factory
 import gleam/otp/static_supervisor.{type Supervisor} as supervisor
 import gleam/otp/supervision
 import gleam/result
@@ -255,13 +256,13 @@ pub type ResponseBody {
 
   /// Allows to send response body in chunks with `chunked` transfer encoding.
   ///
-  ChunkedData(MonitorSelector)
+  ChunkedData
   /// Allows upgrading request to a WebSocket connection.
   ///
-  Websocket(MonitorSelector)
+  Websocket
   /// Allows upgrading request to a Server-Sent Events connection.
   ///
-  SSE(MonitorSelector)
+  SSE
 }
 
 /// Used to monitor different types of connections. This type can be used for
@@ -286,11 +287,11 @@ fn transform_response_body(
     BitsData(bits) -> ewe_http.BitsData(bits)
     StringTreeData(string_tree) -> ewe_http.StringTreeData(string_tree)
 
-    ChunkedData(MonitorSelector(selector)) -> ewe_http.ChunkedData(selector)
+    ChunkedData -> ewe_http.ChunkedData
     File(descriptor, offset, size) -> ewe_http.File(descriptor, offset, size)
 
-    Websocket(MonitorSelector(selector)) -> ewe_http.Websocket(selector)
-    SSE(MonitorSelector(selector)) -> ewe_http.SSE(selector)
+    Websocket -> ewe_http.Websocket
+    SSE -> ewe_http.SSE
 
     Empty -> ewe_http.Empty
   })
@@ -524,10 +525,18 @@ pub fn start(
   let handler = fn(req) { transform_response_body(builder.handler(req)) }
   let on_crash = transform_response_body(builder.on_crash)
 
+  let factory_name = process.new_name("ewe_streams")
+
+  let factory_child =
+    factory.worker_child(fn(start) { start() })
+    |> factory.restart_strategy(supervision.Temporary)
+    |> factory.named(factory_name)
+    |> factory.supervised()
+
   let glisten_supervisor =
     glisten.new(
       handler.init,
-      handler.loop(handler, on_crash, builder.idle_timeout),
+      handler.loop(handler, on_crash, factory_name, builder.idle_timeout),
     )
     |> glisten.bind(builder.interface)
     |> fn(glisten_builder) {
@@ -559,11 +568,11 @@ pub fn start(
 
       started
     })
-
   let glisten_child = supervision.supervisor(fn() { glisten_supervisor })
 
   supervisor.new(supervisor.OneForAll)
   |> supervisor.add(glisten_child)
+  |> supervisor.add(factory_child)
   |> supervisor.start()
 }
 
@@ -728,13 +737,21 @@ pub fn chunked_body(
 
   let transport = req.body.transport
   let socket = req.body.socket
+  let factory_name = req.body.factory_name
 
   case ewe_chunked.send_response(resp, transport, socket) {
     Ok(Nil) -> {
-      case ewe_chunked.start(transport, socket, on_init, handler, on_close) {
-        Ok(selector) -> {
-          response.new(200)
-          |> response.set_body(ChunkedData(MonitorSelector(selector)))
+      let supervisor = factory.get_by_name(factory_name)
+
+      let start_result =
+        factory.start_child(supervisor, fn() {
+          ewe_chunked.start(transport, socket, on_init, handler, on_close)
+        })
+
+      case start_result {
+        Ok(started) -> {
+          let _ = transport.controlling_process(transport, socket, started.pid)
+          response.new(200) |> response.set_body(ChunkedData)
         }
         Error(_) -> response.new(400) |> response.set_body(Empty)
       }
@@ -885,23 +902,30 @@ pub fn upgrade_websocket(
 
   let transport = req.body.transport
   let socket = req.body.socket
+  let factory_name = req.body.factory_name
 
   case ewe_http.upgrade_websocket(req, transport, socket) {
     Ok(#(extensions, per_message_deflate)) -> {
-      let started =
-        ewe_ws.start(
-          transport,
-          socket,
-          on_init,
-          handler,
-          on_close,
-          extensions,
-          per_message_deflate,
-        )
-      case started {
-        Ok(selector) ->
-          response.new(200)
-          |> response.set_body(Websocket(MonitorSelector(selector)))
+      let supervisor = factory.get_by_name(factory_name)
+      let start_result =
+        factory.start_child(supervisor, fn() {
+          ewe_ws.start(
+            transport,
+            socket,
+            on_init,
+            handler,
+            on_close,
+            extensions,
+            per_message_deflate,
+          )
+        })
+
+      case start_result {
+        Ok(started) -> {
+          let _ = transport.controlling_process(transport, socket, started.pid)
+
+          response.new(200) |> response.set_body(Websocket)
+        }
         Error(_) -> response.new(500) |> response.set_body(Empty)
       }
     }
@@ -1052,13 +1076,20 @@ pub fn sse(
 
   let transport = req.body.transport
   let socket = req.body.socket
+  let factory_name = req.body.factory_name
 
   case ewe_sse.send_response(transport, socket) {
     Ok(Nil) -> {
-      case ewe_sse.start(transport, socket, on_init, handler, on_close) {
-        Ok(selector) -> {
-          response.new(200)
-          |> response.set_body(SSE(MonitorSelector(selector)))
+      let supervisor = factory.get_by_name(factory_name)
+      let start_result =
+        factory.start_child(supervisor, fn() {
+          ewe_sse.start(transport, socket, on_init, handler, on_close)
+        })
+
+      case start_result {
+        Ok(started) -> {
+          let _ = transport.controlling_process(transport, socket, started.pid)
+          response.new(200) |> response.set_body(SSE)
         }
         Error(_) -> response.new(400) |> response.set_body(Empty)
       }

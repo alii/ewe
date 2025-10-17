@@ -4,7 +4,6 @@
 import gleam/bytes_tree
 import gleam/erlang/atom
 import gleam/erlang/process.{type Selector, type Subject}
-import gleam/function
 import gleam/http/response
 import gleam/int
 import gleam/list
@@ -74,7 +73,7 @@ pub fn start(
   on_init: fn(Subject(user_message)) -> user_state,
   handler: fn(SSEConnection, user_state, user_message) -> SSENext(user_state),
   on_close: fn(SSEConnection, user_state) -> Nil,
-) -> Result(Selector(process.Down), actor.StartError) {
+) -> Result(actor.Started(Nil), actor.StartError) {
   actor.new_with_initialiser(1000, fn(_subject) {
     let subject = process.new_subject()
     let state = on_init(subject)
@@ -114,11 +113,7 @@ pub fn start(
 
     set_socket_active(transport, socket)
 
-    process.select_specific_monitor(
-      process.new_selector(),
-      process.monitor(pid),
-      function.identity,
-    )
+    actor.Started(..started, data: Nil)
   })
 }
 

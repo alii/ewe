@@ -6,13 +6,15 @@ import gleam/bool
 import gleam/bytes_tree.{type BytesTree}
 import gleam/dict.{type Dict}
 import gleam/erlang/atom
-import gleam/erlang/process.{type Selector}
+import gleam/erlang/process
 import gleam/http
 import gleam/http/request.{type Request, Request}
 import gleam/http/response.{type Response}
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/otp/actor
+import gleam/otp/factory_supervisor as factory
 import gleam/result.{replace_error, try}
 import gleam/set.{type Set}
 import gleam/string
@@ -47,9 +49,9 @@ pub type ResponseBody {
 
   File(descriptor: file.IoDevice, offset: Int, size: Int)
 
-  ChunkedData(Selector(process.Down))
-  Websocket(Selector(process.Down))
-  SSE(Selector(process.Down))
+  ChunkedData
+  Websocket
+  SSE
 
   Empty
 }
@@ -83,6 +85,9 @@ pub type Connection {
     socket: Socket,
     buffer: Buffer,
     http_version: Option(HttpVersion),
+    factory_name: process.Name(
+      factory.Message(fn() -> Result(actor.Started(Nil), actor.StartError), Nil),
+    ),
   )
 }
 
@@ -142,12 +147,18 @@ const max_reading_size = 1_000_000
 // -----------------------------------------------------------------------------
 
 /// Transforms a glisten connection to `Connection` type
-pub fn transform_connection(conn: glisten.Connection(a)) -> Connection {
+pub fn transform_connection(
+  conn: glisten.Connection(a),
+  factory_name: process.Name(
+    factory.Message(fn() -> Result(actor.Started(Nil), actor.StartError), Nil),
+  ),
+) -> Connection {
   Connection(
     transport: conn.transport,
     socket: conn.socket,
     buffer: buffer.empty(),
     http_version: None,
+    factory_name:,
   )
 }
 

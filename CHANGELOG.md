@@ -4,6 +4,7 @@
 
 - Change API of chunked response to match other streaming APIs
 - Remove `process.selector_receive_forever` so that handler process is not waiting until streaming actors are done
+- All new actors that are spawned by streaming APIs are now being supervised with factory supervisor
 
 # v1.0.1
 

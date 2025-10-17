@@ -6,7 +6,6 @@ import gleam/bytes_tree.{type BytesTree}
 import gleam/dynamic/decode
 import gleam/erlang/atom
 import gleam/erlang/process.{type Selector, type Subject}
-import gleam/function
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
@@ -185,7 +184,7 @@ pub fn start(
   on_close: OnClose(user_state),
   extensions: List(String),
   permessage_deflate: Bool,
-) -> Result(Selector(process.Down), actor.StartError) {
+) -> Result(actor.Started(Nil), actor.StartError) {
   actor.new_with_initialiser(1000, fn(subject) {
     let takeovers = websocket.get_context_takeovers(extensions)
     let deflate = case permessage_deflate {
@@ -556,16 +555,8 @@ fn after_start(
   started: actor.Started(Subject(InternalMessage(user_message))),
   transport: Transport,
   socket: Socket,
-) -> Selector(process.Down) {
-  // Assigning started actor as the new socket's controlling process
-  let assert Ok(pid) = process.subject_owner(started.data)
-  let _ = transport.controlling_process(transport, socket, pid)
-
+) -> actor.Started(Nil) {
   set_socket_active_once(transport, socket)
 
-  process.select_specific_monitor(
-    process.new_selector(),
-    process.monitor(pid),
-    function.identity,
-  )
+  actor.Started(..started, data: Nil)
 }

@@ -1,8 +1,7 @@
 import ewe/internal/encoder
 import gleam/bit_array
 import gleam/bytes_tree
-import gleam/erlang/process.{type Selector, type Subject}
-import gleam/function
+import gleam/erlang/process.{type Subject}
 import gleam/http/response.{type Response}
 import gleam/otp/actor
 import gleam/result
@@ -42,7 +41,7 @@ pub fn start(
   on_init: fn(Subject(user_message)) -> user_state,
   handler: fn(ChunkedBody, user_state, user_message) -> ChunkedNext(user_state),
   on_close: fn(ChunkedBody, user_state) -> Nil,
-) -> Result(Selector(process.Down), actor.StartError) {
+) -> Result(actor.Started(Nil), actor.StartError) {
   actor.new_with_initialiser(1000, fn(_subject) {
     let subject = process.new_subject()
     let state = on_init(subject)
@@ -96,11 +95,7 @@ pub fn start(
     let assert Ok(pid) = process.subject_owner(started.data)
     let _ = transport.controlling_process(transport, socket, pid)
 
-    process.select_specific_monitor(
-      process.new_selector(),
-      process.monitor(pid),
-      function.identity,
-    )
+    actor.Started(..started, data: Nil)
   })
 }
 

@@ -7,9 +7,11 @@ import gleam/bit_array
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request.{type Request}
-import gleam/http/response.{type Response, Response}
+import gleam/http/response.{type Response}
 import gleam/int
 import gleam/option.{type Option, None, Some}
+import gleam/otp/actor
+import gleam/otp/factory_supervisor as factory
 import gleam/result
 import gleam/string
 import gleam/string_tree
@@ -72,6 +74,9 @@ pub fn init(_) -> #(GlistenState, Option(process.Selector(GlistenMessage))) {
 pub fn loop(
   handler: fn(Request(Connection)) -> Response(ResponseBody),
   on_crash: Response(ResponseBody),
+  factory_name: process.Name(
+    factory.Message(fn() -> Result(actor.Started(Nil), actor.StartError), Nil),
+  ),
   idle_timeout: Int,
 ) -> glisten.Loop(GlistenState, GlistenMessage) {
   fn(
@@ -87,7 +92,7 @@ pub fn loop(
           None -> process.TimerNotFound
         }
 
-        let http_conn = ewe_http.transform_connection(conn)
+        let http_conn = ewe_http.transform_connection(conn, factory_name)
 
         let parsed = ewe_http.parse_request(http_conn, buffer.new(msg))
 
@@ -149,22 +154,24 @@ fn call_handler(
     }
   }
 
-  case resp {
-    Response(body: Websocket(_selector), ..)
-    | Response(body: SSE(_selector), ..)
-    | Response(body: ChunkedData(_selector), ..) -> {
-      // NOTE: don't receive forever for now, as the connection is handed off 
-      // to actors. 
-      // let _ = process.selector_receive_forever(selector)
+  case resp.body {
+    Websocket | SSE | ChunkedData -> {
+      process.sleep(1000)
       Stop
     }
-    Response(body:, ..) -> {
-      let sent = case body {
-        File(descriptor, offset, size) ->
-          handle_resp_file(req, resp, descriptor, offset, size)
-        _ -> handle_resp_body(req, resp, body)
-      }
+    File(descriptor, offset, size) -> {
+      let sent = handle_resp_file(req, resp, descriptor, offset, size)
 
+      case sent, is_connection_close(resp) {
+        Ok(Nil), False -> {
+          let timer = process.send_after(subject, idle_timeout, IdleTimeout)
+          Continue(GlistenState(Some(timer), subject))
+        }
+        _, _ -> Stop
+      }
+    }
+    _ -> {
+      let sent = handle_resp_body(req, resp, resp.body)
       case sent, is_connection_close(resp) {
         Ok(Nil), False -> {
           let timer = process.send_after(subject, idle_timeout, IdleTimeout)
