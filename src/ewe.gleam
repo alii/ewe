@@ -65,6 +65,12 @@
 //// - [stream_body](#stream_body)
 //// #### Response
 //// - [file](#file)
+//// #### Chunked Response
+//// - [chunked_body](#chunked_body)
+//// - [send_chunk](#send_chunk)
+//// - [chunked_continue](#chunked_continue)
+//// - [chunked_stop](#chunked_stop)
+//// - [chunked_stop_abnormal](#chunked_stop_abnormal)
 //// #### Websocket
 //// - [upgrade_websocket](#upgrade_websocket)
 //// - [send_binary_frame](#send_binary_frame)
@@ -652,23 +658,36 @@ fn consumer_adapter(
 // Chunked Response Body
 // -----------------------------------------------------------------------------
 
+/// Represents a chunked response body. This type is used to send a chunked response to the client.
 pub type ChunkedBody =
   ewe_chunked.ChunkedBody
 
+/// Represents an instruction on how chunked response should be processed.
+///
+/// - continue processing the chunked response.
+/// - stop the chunked response normally.
+/// - stop the chunked response with abnormal reason.
+///
 pub opaque type ChunkedNext(user_state) {
   ChunkedContinue(user_state)
   ChunkedStop
   ChunkedAbnormalStop(reason: String)
 }
 
+/// Instructs chunked response to continue processing.
+/// 
 pub fn chunked_continue(user_state: user_state) -> ChunkedNext(user_state) {
   ChunkedContinue(user_state)
 }
 
+/// Instructs chunked response to stop normally.
+///
 pub fn chunked_stop() -> ChunkedNext(user_state) {
   ChunkedStop
 }
 
+/// Instructs chunked response to stop with abnormal reason.
+///
 pub fn chunked_stop_abnormal(reason: String) -> ChunkedNext(user_state) {
   ChunkedAbnormalStop(reason)
 }
@@ -683,6 +702,17 @@ fn to_internal_chunked_next(
   }
 }
 
+/// Sets up the connection for chunked response.
+/// 
+/// `on_init` function is called once the chunked response process is 
+/// initialized. The argument is subject that can be used to send chunks to the 
+/// client. It must return initial state.
+///
+/// `handler` function is called for every message received. It must return
+/// instruction on how chunked response should proceed.
+///
+/// `on_close` function is called when the chunked response process is going to be stopped.
+///
 pub fn chunked_body(
   req: Request,
   resp: HttpResponse(a),
@@ -713,11 +743,13 @@ pub fn chunked_body(
   }
 }
 
+/// Sends a chunk to the client.
+///
 pub fn send_chunk(
-  conn: ChunkedBody,
+  body: ChunkedBody,
   chunk: BitArray,
 ) -> Result(Nil, glisten.SocketReason) {
-  ewe_chunked.send_chunk(conn.transport, conn.socket, chunk)
+  ewe_chunked.send_chunk(body.transport, body.socket, chunk)
 }
 
 // -----------------------------------------------------------------------------
@@ -855,7 +887,7 @@ pub fn upgrade_websocket(
   let socket = req.body.socket
 
   case ewe_http.upgrade_websocket(req, transport, socket) {
-    Ok(#(extensions, permessage_deflate)) -> {
+    Ok(#(extensions, per_message_deflate)) -> {
       let started =
         ewe_ws.start(
           transport,
@@ -864,7 +896,7 @@ pub fn upgrade_websocket(
           handler,
           on_close,
           extensions,
-          permessage_deflate,
+          per_message_deflate,
         )
       case started {
         Ok(selector) ->
