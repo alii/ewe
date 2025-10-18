@@ -49,7 +49,7 @@ pub type ResponseBody {
 
   File(descriptor: file.IoDevice, offset: Int, size: Int)
 
-  ChunkedData
+  Chunked
   Websocket
   SSE
 

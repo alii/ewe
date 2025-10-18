@@ -25,8 +25,8 @@ import ewe/internal/buffer
 import ewe/internal/encoder
 import ewe/internal/exception
 import ewe/internal/http.{
-  type Connection, type ResponseBody, BitsData, BytesData, ChunkedData, Empty,
-  File, SSE, StringTreeData, TextData, Websocket,
+  type Connection, type ResponseBody, BitsData, BytesData, Chunked, Empty, File,
+  SSE, StringTreeData, TextData, Websocket,
 } as ewe_http
 
 // -----------------------------------------------------------------------------
@@ -155,7 +155,7 @@ fn call_handler(
   }
 
   case resp.body {
-    Websocket | SSE | ChunkedData -> {
+    Websocket | SSE | Chunked -> {
       process.sleep(1000)
       Stop
     }

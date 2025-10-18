@@ -227,10 +227,12 @@ pub fn get_server_info(
 ///
 /// Types that should not be used directly:
 /// - `File`: see `ewe.file` to construct it.
-/// - `WebsocketConnection`: used in `ewe.upgrade_websocket` for correct
-/// WebSocket connection handling.
-/// - `SSEConnection`: used in `ewe.sse` for correct
-/// Server-Sent Events connection handling.
+/// - `ChunkedData`: indicates that response body is being sent in chunks with
+/// `chunked` transfer encoding.
+/// - `Websocket`: indicates that request is being upgraded to a WebSocket
+/// connection.
+/// - `SSE`: indicates that request is being upgraded to a Server-Sent Events
+/// connection.
 ///
 pub type ResponseBody {
   /// Allows to set response body from a string.
@@ -254,23 +256,17 @@ pub type ResponseBody {
   ///
   File(descriptor: file.IoDevice, offset: Int, size: Int)
 
-  /// Allows to send response body in chunks with `chunked` transfer encoding.
+  /// Indicates that response body is being sent in chunks with `chunked`
+  /// transfer encoding.
   ///
-  ChunkedData
-  /// Allows upgrading request to a WebSocket connection.
+  Chunked
+  /// Indicates that request is being upgraded to a WebSocket connection.
   ///
   Websocket
-  /// Allows upgrading request to a Server-Sent Events connection.
+  /// Indicates that request is being upgraded to a Server-Sent Events
+  /// connection.
   ///
   SSE
-}
-
-/// Used to monitor different types of connections. This type can be used for
-/// frameworks to create wrappings for different types of connections.
-///
-@internal
-pub type MonitorSelector {
-  MonitorSelector(Selector(process.Down))
 }
 
 /// A convenient alias for a HTTP response with a `ResponseBody` as the body.
@@ -287,7 +283,7 @@ fn transform_response_body(
     BitsData(bits) -> ewe_http.BitsData(bits)
     StringTreeData(string_tree) -> ewe_http.StringTreeData(string_tree)
 
-    ChunkedData -> ewe_http.ChunkedData
+    Chunked -> ewe_http.Chunked
     File(descriptor, offset, size) -> ewe_http.File(descriptor, offset, size)
 
     Websocket -> ewe_http.Websocket
@@ -751,7 +747,7 @@ pub fn chunked_body(
       case start_result {
         Ok(started) -> {
           let _ = transport.controlling_process(transport, socket, started.pid)
-          response.new(200) |> response.set_body(ChunkedData)
+          response.new(200) |> response.set_body(Chunked)
         }
         Error(_) -> response.new(400) |> response.set_body(Empty)
       }
