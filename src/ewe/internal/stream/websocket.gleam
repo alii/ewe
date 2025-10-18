@@ -57,7 +57,7 @@ pub type WebsocketNext(user_state, user_message) {
 type WebsocketState(user_state) {
   WebsocketState(
     user_state: user_state,
-    permessage_deflate: Option(compression.Compression),
+    per_message_deflate: Option(compression.Compression),
     buffer: BitArray,
     awaiting_frames: List(websocket.ParsedFrame),
   )
@@ -203,7 +203,7 @@ pub fn start(
     let ws_state =
       WebsocketState(
         user_state:,
-        permessage_deflate: deflate,
+        per_message_deflate: deflate,
         buffer: <<>>,
         awaiting_frames: [],
       )
@@ -218,7 +218,7 @@ pub fn start(
       WebsocketConnection(
         transport,
         socket,
-        get_deflate(state.permessage_deflate),
+        get_deflate(state.per_message_deflate),
       )
 
     case msg {
@@ -277,7 +277,7 @@ fn handle_valid_packet(
   let decoded =
     websocket.decode_many_frames_result(
       buffer,
-      get_inflate(state.permessage_deflate),
+      get_inflate(state.per_message_deflate),
       [],
     )
 
@@ -335,7 +335,7 @@ fn handle_frames_processing(
           data_frames,
           None,
           [],
-          get_inflate(state.permessage_deflate),
+          get_inflate(state.per_message_deflate),
         )
 
       case aggregated {
@@ -531,7 +531,7 @@ fn handle_close(
   conn: WebsocketConnection,
   abnormal_reason: Option(String),
 ) -> actor.Next(WebsocketState(user_state), InternalMessage(user_message)) {
-  option.map(state.permessage_deflate, fn(compression) {
+  option.map(state.per_message_deflate, fn(compression) {
     compression.close(compression.deflate)
     compression.close(compression.inflate)
   })
@@ -550,7 +550,7 @@ fn handle_close(
   }
 }
 
-/// Sets up monitoring after actor start
+/// Maps actor's starting value to Nil
 fn after_start(
   started: actor.Started(Subject(InternalMessage(user_message))),
   transport: Transport,

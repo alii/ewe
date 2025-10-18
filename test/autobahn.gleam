@@ -7,8 +7,6 @@ pub fn main() -> Nil {
   logging.configure()
   logging.set_level(logging.Info)
 
-  // spectator.start()
-
   let ewe_server =
     ewe.new(fn(req) {
       ewe.upgrade_websocket(

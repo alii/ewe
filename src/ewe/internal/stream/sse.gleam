@@ -107,14 +107,7 @@ pub fn start(
     }
   })
   |> actor.start()
-  |> result.map(fn(started) {
-    let assert Ok(pid) = process.subject_owner(started.data)
-    let _ = transport.controlling_process(transport, socket, pid)
-
-    set_socket_active(transport, socket)
-
-    actor.Started(..started, data: Nil)
-  })
+  |> result.map(after_start(_, transport, socket))
 }
 
 /// Sends an event to the client
@@ -169,6 +162,20 @@ fn create_socket_selector(
 /// Formats a field and value for a Server-Sent Events event
 fn format(field: String, value: String) {
   field <> ": " <> value <> "\n"
+}
+
+/// Maps actor's starting value to Nil
+fn after_start(
+  started: actor.Started(Subject(user_message)),
+  transport: Transport,
+  socket: Socket,
+) -> actor.Started(Nil) {
+  let assert Ok(pid) = process.subject_owner(started.data)
+  let _ = transport.controlling_process(transport, socket, pid)
+
+  set_socket_active(transport, socket)
+
+  actor.Started(..started, data: Nil)
 }
 
 /// Sets socket to active mode for one message delivery
