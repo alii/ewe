@@ -1,6 +1,6 @@
 # Changelog
 
-# Unreleased
+# v2.0.0
 
 - Change API of chunked response to match other streaming APIs
 - Handler's process is not waiting until streaming actors are done

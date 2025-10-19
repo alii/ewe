@@ -10,7 +10,7 @@ ewe [/juː/] - fluffy package for building web servers. Inspired by [mist](https
 ## Installation
 
 ```sh
-gleam add ewe@1 gleam_erlang gleam_otp gleam_http gleam_yielder logging
+gleam add ewe@2 gleam_erlang gleam_otp gleam_http logging
 ```
 
 ## Quick Start
