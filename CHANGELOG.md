@@ -1,5 +1,9 @@
 # Changelog
 
+# v2.0.1
+
+- Update the websocket implementation to set active mode to `Count` to receive N messages, rather than setting `Once` every message
+
 # v2.0.0
 
 - Change API of chunked response to match other streaming APIs

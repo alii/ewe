@@ -13,7 +13,6 @@ import gleam/result
 import gleam/string_tree
 
 import glisten/socket.{type Socket}
-import glisten/socket/options.{ActiveMode, Once}
 import glisten/transport.{type Transport}
 
 import ewe/internal/encoder

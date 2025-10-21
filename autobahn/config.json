@@ -6,7 +6,9 @@
       "agent": "ewe"
     }
   ],
-  "cases": ["*"],
+  "cases": [
+    "*"
+  ],
   "exclude-cases": [],
   "exclude-agent-cases": {},
   "optioms": {
