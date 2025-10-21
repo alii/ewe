@@ -14,7 +14,7 @@ import gleam/string
 import logging
 
 import glisten/socket.{type Socket, type SocketReason}
-import glisten/socket/options.{ActiveMode, Once}
+import glisten/socket/options.{ActiveMode, Count}
 import glisten/transport.{type Transport}
 
 // TODO: replace this once gramps changes are published
@@ -71,6 +71,7 @@ type ActorNext(user_state, user_message) =
 type InternalMessage(user_message) {
   Packet(BitArray)
   Close
+  TcpPassive
   User(user_message)
   Invalid
 }
@@ -152,6 +153,7 @@ fn create_socket_selector() -> Selector(InternalMessage(user_message)) {
   |> process.select_record(atom.create("tcp_closed"), 1, fn(_) { Close })
   // https://github.com/rawhat/glisten/blob/master/src/glisten/internal/handler.gleam#L137
   |> process.select_record(atom.create("ssl_closed"), 1, fn(_) { Close })
+  |> process.select_record(atom.create("tcp_passive"), 1, fn(_) { TcpPassive })
 }
 
 /// Maps user selector to internal message
@@ -166,10 +168,39 @@ fn user_selector(
 // -----------------------------------------------------------------------------
 
 /// Sets socket to active mode for one message delivery
-fn set_socket_active_once(transport: Transport, socket: Socket) -> Nil {
-  let _ = transport.set_opts(transport, socket, [ActiveMode(Once)])
-  Nil
-}
+// fn set_socket_active_once(transport: Transport, socket: Socket) -> Nil {
+//   // echo transport.get_socket_opts(transport, socket, [atom.create("active")])
+
+//   let _ = transport.set_opts(transport, socket, [ActiveMode(Once)])
+
+//   // echo transport.get_socket_opts(transport, socket, [atom.create("active")])
+
+//   Nil
+// }
+
+const socket_active_count = 100
+
+// fn set_socket_active_smart(
+//   transport: Transport,
+//   socket: Socket,
+//   count: Int,
+// ) -> Int {
+//   echo #(
+//     count,
+//     transport.get_socket_opts(transport, socket, [atom.create("active")]),
+//   )
+
+//   case count {
+//     0 -> {
+//       let _ =
+//         transport.set_opts(transport, socket, [
+//           ActiveMode(Count(socket_active_count)),
+//         ])
+//       socket_active_count
+//     }
+//     _ -> count - 1
+//   }
+// }
 
 // -----------------------------------------------------------------------------
 // PUBLIC API
@@ -227,6 +258,13 @@ pub fn start(
       User(user_message) ->
         handle_user_message(state, conn, user_message, handler, on_close)
       Invalid -> handle_close(on_close, state, conn, Some(malformed))
+      TcpPassive -> {
+        let _ =
+          transport.set_opts(transport, socket, [
+            ActiveMode(Count(socket_active_count)),
+          ])
+        actor.continue(state)
+      }
     }
   })
   |> actor.start()
@@ -285,8 +323,6 @@ fn handle_valid_packet(
     Ok(#(frames, rest)) ->
       handle_frames_processing(state, conn, frames, rest, handler, on_close)
     Error(websocket.NeedMoreDataAccumulated(parsed, rest)) -> {
-      set_socket_active_once(conn.transport, conn.socket)
-
       actor.continue(
         WebsocketState(
           ..state,
@@ -340,8 +376,6 @@ fn handle_frames_processing(
 
       case aggregated {
         Ok([]) -> {
-          set_socket_active_once(conn.transport, conn.socket)
-
           actor.continue(
             WebsocketState(..state, buffer: rest, awaiting_frames: data_frames),
           )
@@ -357,8 +391,6 @@ fn handle_frames_processing(
 
           case next {
             Continue(user_state, selector) -> {
-              set_socket_active_once(conn.transport, conn.socket)
-
               let next =
                 actor.continue(
                   WebsocketState(
@@ -556,7 +588,10 @@ fn after_start(
   transport: Transport,
   socket: Socket,
 ) -> actor.Started(Nil) {
-  set_socket_active_once(transport, socket)
+  let _ =
+    transport.set_opts(transport, socket, [
+      ActiveMode(Count(socket_active_count)),
+    ])
 
   actor.Started(..started, data: Nil)
 }
