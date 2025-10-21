@@ -173,13 +173,5 @@ fn after_start(
   let assert Ok(pid) = process.subject_owner(started.data)
   let _ = transport.controlling_process(transport, socket, pid)
 
-  set_socket_active(transport, socket)
-
   actor.Started(..started, data: Nil)
-}
-
-/// Sets socket to active mode for one message delivery
-fn set_socket_active(transport: Transport, socket: Socket) -> Nil {
-  let _ = transport.set_opts(transport, socket, [ActiveMode(Once)])
-  Nil
 }
