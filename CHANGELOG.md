@@ -1,5 +1,10 @@
 # Changelog
 
+# v2.0.2
+
+- Refactor internal handler code
+- Support multiple directives in the `connection` header during upgrade to WebSocket
+
 # v2.0.1
 
 - Update the websocket implementation to set active mode to `Count` to receive N messages, rather than setting `Once` every message

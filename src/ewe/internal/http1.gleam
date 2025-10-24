@@ -374,9 +374,15 @@ pub fn upgrade_websocket(
 ) -> Result(#(List(String), Bool), UpgradeWebsocketError) {
   use <- bool.guard(req.method != http.Get, Error(MethodNotGet))
 
-  use _ <- try(case request.get_header(req, "connection") {
-    Ok("Upgrade") -> Ok(Nil)
-    Ok(_) -> Error(InvalidConnectionHeader)
+  let is_upgrade =
+    request.get_header(req, "connection")
+    |> result.map(fn(connection) {
+      string.lowercase(connection) |> string.contains("upgrade")
+    })
+
+  use _ <- try(case is_upgrade {
+    Ok(True) -> Ok(Nil)
+    Ok(False) -> Error(InvalidConnectionHeader)
     Error(_) -> Error(MissingConnectionHeader)
   })
 
