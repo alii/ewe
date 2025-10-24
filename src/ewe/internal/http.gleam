@@ -12,7 +12,7 @@ import gleam/http/request.{type Request, Request}
 import gleam/http/response.{type Response}
 import gleam/int
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{None, Some}
 import gleam/otp/actor
 import gleam/otp/factory_supervisor as factory
 import gleam/result.{replace_error, try}
@@ -84,7 +84,6 @@ pub type Connection {
     transport: Transport,
     socket: Socket,
     buffer: Buffer,
-    http_version: Option(HttpVersion),
     factory_name: process.Name(
       factory.Message(fn() -> Result(actor.Started(Nil), actor.StartError), Nil),
     ),
@@ -99,7 +98,6 @@ pub type HttpVersion {
 
 // WebSocket upgrade error types
 pub type UpgradeWebsocketError {
-  VersionNot11OrGreater
   MethodNotGet
   MissingConnectionHeader
   InvalidConnectionHeader
@@ -113,6 +111,13 @@ pub type UpgradeWebsocketError {
 pub type Stream {
   Consumed(data: BitArray, next: fn(Int) -> Result(Stream, ParseError))
   Done
+}
+
+// Result of parsing a request
+pub type ParsedRequest {
+  Http1Request(req: Request(Connection), version: HttpVersion)
+  Http2Upgrade(data: BitArray)
+  Http2CleartextUpgrade(req: Request(Connection), settings: String)
 }
 
 // -----------------------------------------------------------------------------
@@ -139,8 +144,8 @@ type ChunkedStreamState {
 // CONSTANTS
 // -----------------------------------------------------------------------------
 
-// 1MB = 1M bytes
-const max_reading_size = 1_000_000
+// 2MB = 2M bytes
+const max_reading_size = 2_000_000
 
 // -----------------------------------------------------------------------------
 // PUBLIC API
@@ -157,7 +162,6 @@ pub fn transform_connection(
     transport: conn.transport,
     socket: conn.socket,
     buffer: buffer.empty(),
-    http_version: None,
     factory_name:,
   )
 }
@@ -166,7 +170,7 @@ pub fn transform_connection(
 pub fn parse_request(
   conn: Connection,
   buffer: Buffer,
-) -> Result(Request(Connection), ParseError) {
+) -> Result(ParsedRequest, ParseError) {
   let transport = conn.transport
   let socket = conn.socket
 
@@ -183,13 +187,6 @@ pub fn parse_request(
         |> try(uri.parse)
         |> replace_error(InvalidTarget),
       )
-
-      use version <- try(case version {
-        #(1, 0) -> Ok(Http10)
-        #(1, 1) -> Ok(Http11)
-        _ -> Error(InvalidVersion)
-      })
-
       // Headers
       use #(headers, rest) <- try(parse_headers(
         transport,
@@ -223,21 +220,43 @@ pub fn parse_request(
           })
         })
 
-      Ok(Request(
-        method:,
-        headers: dict.to_list(headers),
-        body: Connection(
-          ..conn,
-          buffer: buffer.new(rest),
-          http_version: Some(version),
-        ),
-        scheme:,
-        host:,
-        port:,
-        path: uri.path,
-        query: uri.query,
-      ))
+      let req =
+        Request(
+          method:,
+          headers: dict.to_list(headers),
+          body: Connection(..conn, buffer: buffer.new(rest)),
+          scheme:,
+          host:,
+          port:,
+          path: uri.path,
+          query: uri.query,
+        )
+
+      case version {
+        #(1, 0) -> Ok(Http1Request(req:, version: Http10))
+        #(1, 1) -> {
+          let connection = dict.get(headers, "connection")
+          let upgrade = dict.get(headers, "upgrade")
+          let settings = dict.get(headers, "http2-settings")
+
+          case connection, upgrade, settings {
+            Ok(connection), Ok("h2c"), Ok(settings) -> {
+              let is_upgrade =
+                string.contains(string.lowercase(connection), "upgrade")
+
+              case is_upgrade {
+                True -> Ok(Http2CleartextUpgrade(req:, settings:))
+                False -> Ok(Http1Request(req:, version: Http11))
+              }
+            }
+            _, _, _ -> Ok(Http1Request(req:, version: Http11))
+          }
+        }
+        _ -> Error(InvalidVersion)
+      }
     }
+    Ok(Packet(decoder.Http2Upgrade, <<"\r\nSM\r\n\r\n":utf8, data:bits>>)) ->
+      Ok(Http2Upgrade(data))
     Ok(More(size)) -> {
       use new_buffer <- try(read_from_socket(
         transport,
@@ -353,9 +372,6 @@ pub fn upgrade_websocket(
   transport: Transport,
   socket: Socket,
 ) -> Result(#(List(String), Bool), UpgradeWebsocketError) {
-  let assert option.Some(http_version) = req.body.http_version
-
-  use <- bool.guard(http_version != Http11, Error(VersionNot11OrGreater))
   use <- bool.guard(req.method != http.Get, Error(MethodNotGet))
 
   use _ <- try(case request.get_header(req, "connection") {

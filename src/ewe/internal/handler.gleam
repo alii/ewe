@@ -97,15 +97,35 @@ pub fn loop(
         let parsed = ewe_http.parse_request(http_conn, buffer.new(msg))
 
         case parsed {
-          Ok(req) ->
+          Ok(ewe_http.Http1Request(req, version)) ->
             case
-              call_handler(req, state.subject, handler, on_crash, idle_timeout)
+              call_handler(
+                req,
+                version,
+                state.subject,
+                handler,
+                on_crash,
+                idle_timeout,
+              )
             {
               Continue(new_state) -> glisten.continue(new_state)
               Stop -> {
                 glisten.stop()
               }
             }
+
+          Ok(ewe_http.Http2Upgrade(_data)) -> {
+            logging.log(logging.Debug, "Received HTTP/2 upgrade request")
+            glisten.stop()
+          }
+
+          Ok(ewe_http.Http2CleartextUpgrade(_req, _settings)) -> {
+            logging.log(
+              logging.Debug,
+              "Received HTTP/2 cleartext upgrade request",
+            )
+            glisten.stop()
+          }
 
           Error(reason) -> {
             let status = case reason {
@@ -140,6 +160,7 @@ pub fn loop(
 /// Calls the user-provided handler function with error handling
 fn call_handler(
   req: request.Request(Connection),
+  version: ewe_http.HttpVersion,
   subject: process.Subject(GlistenMessage),
   handler: fn(Request(Connection)) -> Response(ResponseBody),
   on_crash: Response(ResponseBody),
@@ -155,12 +176,9 @@ fn call_handler(
   }
 
   case resp.body {
-    Websocket | SSE | Chunked -> {
-      process.sleep(1000)
-      Stop
-    }
+    Websocket | SSE | Chunked -> Stop
     File(descriptor, offset, size) -> {
-      let sent = handle_resp_file(req, resp, descriptor, offset, size)
+      let sent = handle_resp_file(req, version, resp, descriptor, offset, size)
 
       case sent, is_connection_close(resp) {
         Ok(Nil), False -> {
@@ -171,7 +189,7 @@ fn call_handler(
       }
     }
     _ -> {
-      let sent = handle_resp_body(req, resp, resp.body)
+      let sent = handle_resp_body(req, version, resp, resp.body)
       case sent, is_connection_close(resp) {
         Ok(Nil), False -> {
           let timer = process.send_after(subject, idle_timeout, IdleTimeout)
@@ -190,13 +208,12 @@ fn call_handler(
 /// Handles the file response body and sends it to the client
 fn handle_resp_file(
   req: Request(Connection),
+  version: ewe_http.HttpVersion,
   resp: Response(ResponseBody),
   descriptor: file.IoDevice,
   offset: Int,
   size: Int,
 ) -> Result(Nil, glisten.SocketReason) {
-  let assert option.Some(http_version) = req.body.http_version
-
   let resp = case response.get_header(resp, "content-length") {
     Ok(_) -> resp
     Error(Nil) ->
@@ -204,7 +221,7 @@ fn handle_resp_file(
   }
 
   let sent =
-    ewe_http.append_default_headers(resp, req, http_version)
+    ewe_http.append_default_headers(resp, req, version)
     |> encoder.setup_encoded_response()
     |> transport.send(req.body.transport, req.body.socket, _)
     |> result.try(fn(_) {
@@ -220,11 +237,10 @@ fn handle_resp_file(
 /// Handles the response body and sends it to the client
 fn handle_resp_body(
   req: Request(Connection),
+  version: ewe_http.HttpVersion,
   resp: Response(ResponseBody),
   body: ResponseBody,
 ) -> Result(Nil, glisten.SocketReason) {
-  let assert option.Some(http_version) = req.body.http_version
-
   let bits = case body {
     TextData(text) -> bit_array.from_string(text)
     StringTreeData(string_tree) ->
@@ -265,7 +281,7 @@ fn handle_resp_body(
       |> response.set_header("content-length", int.to_string(content_length))
   }
 
-  ewe_http.append_default_headers(resp, req, http_version)
+  ewe_http.append_default_headers(resp, req, version)
   |> encoder.encode_response()
   |> transport.send(req.body.transport, req.body.socket, _)
 }

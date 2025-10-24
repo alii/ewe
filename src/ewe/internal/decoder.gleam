@@ -30,6 +30,7 @@ pub type HttpPacket {
   HttpRequest(method: BitArray, path: AbsPath, version: Version)
   HttpHeader(idx: Int, field: BitArray, value: BitArray)
   HttpEoh
+  Http2Upgrade
 }
 
 // Complete packet with data and remaining bytes

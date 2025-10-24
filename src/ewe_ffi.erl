@@ -1,8 +1,7 @@
 -module(ewe_ffi).
 
--export([close_file/1, decode_packet/3, init_clock_storage/0, lookup_http_date/0,
-         now/0, now_microseconds/0, open_file/1, rescue/1, set_http_date/1,
-         validate_field_value/1]).
+-export([close_file/1, decode_packet/3, init_clock_storage/0, lookup_http_date/0, now/0,
+         now_microseconds/0, open_file/1, rescue/1, set_http_date/1, validate_field_value/1]).
 
 % -----------------------------------------------------------------------------
 % HTTP
@@ -10,6 +9,8 @@
 
 decode_packet(Type, Packet, Options) ->
   case erlang:decode_packet(Type, Packet, Options) of
+    {ok, {http_request, <<"PRI">>, "*", {2, 0}}, Rest} ->
+      {ok, {packet, {http2_upgrade, Rest}}};
     {ok, {http_request, Method, Uri, Version}, Rest} ->
       {ok, {packet, {http_request, atom_to_binary(Method), Uri, Version}, Rest}};
     {ok, {http_header, Idx, _, Field, Value}, Rest} ->
