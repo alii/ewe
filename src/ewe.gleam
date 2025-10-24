@@ -121,7 +121,7 @@ import ewe/internal/gramps/websocket as ws
 
 import ewe/internal/file
 import ewe/internal/handler
-import ewe/internal/http as ewe_http
+import ewe/internal/http1 as ewe_http
 import ewe/internal/stream/chunked as ewe_chunked
 import ewe/internal/stream/sse as ewe_sse
 import ewe/internal/stream/websocket as ewe_ws
