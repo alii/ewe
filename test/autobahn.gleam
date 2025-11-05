@@ -30,7 +30,7 @@ pub fn main() -> Nil {
     })
     |> ewe.enable_ipv6()
     |> ewe.bind_all()
-    |> ewe.listening(port: 8080)
+    |> ewe.listening(port: 8081)
     |> ewe.supervised()
 
   let assert Ok(_) =

@@ -1,5 +1,11 @@
 # Changelog
 
+# v2.0.3
+
+- Replace `gramps` with `websocks` package
+- Remove alias names for internal stream modules
+- Improve script that change documentation
+
 # v2.0.2
 
 - Refactor internal handler code

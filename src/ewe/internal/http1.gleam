@@ -21,12 +21,11 @@ import gleam/string
 import gleam/string_tree.{type StringTree}
 import gleam/uri
 
+import websocks
+
 import glisten
 import glisten/socket.{type Socket}
 import glisten/transport.{type Transport}
-
-// TODO: replace this once gramps changes are published
-import ewe/internal/gramps/websocket as ws
 
 import ewe/internal/buffer.{type Buffer}
 import ewe/internal/clock
@@ -404,14 +403,14 @@ pub fn upgrade_websocket(
     |> result.replace_error(MissingWebsocketKey),
   )
 
-  let accept_key = ws.parse_websocket_key(key)
+  let accept_key = websocks.compute_accept(key)
 
   let extensions =
     request.get_header(req, "sec-websocket-extensions")
     |> result.map(string.split(_, ";"))
     |> result.unwrap([])
 
-  let permessage_deflate = ws.has_deflate(extensions)
+  let permessage_deflate = websocks.has_deflate(extensions)
 
   let resp =
     response.new(101)
