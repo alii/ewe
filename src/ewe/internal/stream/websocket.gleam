@@ -41,7 +41,7 @@ pub type WebsocketMessage(user_message) {
 
 // Control flow for WebSocket message handling
 pub type WebsocketNext(user_state, user_message) {
-  Continue(user_state, Option(Selector(user_message)))
+  Continue(user_state: user_state, selector: Option(Selector(user_message)))
   NormalStop
   AbnormalStop(reason: String)
 }
@@ -272,136 +272,108 @@ fn handle_valid_packet(
   handler: Handler(user_state, user_message),
   on_close: OnClose(user_state),
 ) -> ActorNext(user_state, user_message) {
-  let decoded = websocks.decode_many_frames(data, state.context)
+  let conn = WebsocketConnection(transport, socket, state.context)
+  let result =
+    websocks.process_incomming_frames(
+      data,
+      state.context,
+      ResolveState(
+        socket:,
+        transport:,
+        handler:,
+        next: Continue(state.user_state, None),
+      ),
+      handle_frame,
+    )
 
-  // NOTE: I was doing that before
-  // let #(data_frames, control_frames) = separate_frames(frames, [], [])
+  case result {
+    Ok(#(resolved_state, context)) -> {
+      case resolved_state.next {
+        Continue(user_state, selector) -> {
+          let next = actor.continue(WebsocketState(user_state:, context:))
 
-  // let control_result = case control_frames {
-  //   [] -> Continue(state.user_state, None)
-  //   _ ->
-  //     loop_by_frames(
-  //       control_frames,
-  //       conn,
-  //       handler,
-  //       Continue(state.user_state, None),
-  //     )
-  // }
-
-  case decoded {
-    Ok(#(decoded_frames, context)) -> {
-      case websocks.resolve_fragments(decoded_frames, context) {
-        Ok(#(resolved_frames, context)) -> {
-          let conn = WebsocketConnection(transport, socket, context)
-          let next =
-            handle_frames(
-              resolved_frames,
-              conn,
-              handler,
-              Continue(state.user_state, None),
-            )
-
-          case next {
-            Continue(user_state, selector) -> {
-              let next = actor.continue(WebsocketState(user_state:, context:))
-
-              case selector {
-                Some(selector) -> actor.with_selector(next, selector)
-                None -> next
-              }
-            }
-            NormalStop -> handle_close(on_close, state, conn, None)
-            AbnormalStop(reason) ->
-              handle_close(on_close, state, conn, Some(reason))
+          case selector {
+            Some(selector) -> actor.with_selector(next, selector)
+            None -> next
           }
         }
-        Error(violation) -> {
-          echo violation as "violation during frame resolving"
-          let conn = WebsocketConnection(transport, socket, context)
-          handle_close(on_close, state, conn, Some(malformed))
-        }
+        NormalStop -> handle_close(on_close, state, conn, None)
+        AbnormalStop(reason) ->
+          handle_close(on_close, state, conn, Some(reason))
       }
     }
-    Error(Nil) -> {
-      let conn = WebsocketConnection(transport, socket, state.context)
+    Error(violation) -> {
+      echo violation as "violation during frame resolving"
       handle_close(on_close, state, conn, Some(malformed))
     }
   }
 }
 
-/// Separates frames into data and control frames
-// fn separate_frames(
-//   frames: List(websocket.ParsedFrame),
-//   data_frames: List(websocket.ParsedFrame),
-//   control_frames: List(websocket.Frame),
-// ) -> #(List(websocket.ParsedFrame), List(websocket.Frame)) {
-//   case frames {
-//     [] -> #(list.reverse(data_frames), list.reverse(control_frames))
-//     [websocket.Complete(websocket.Control(control_frame)), ..rest] ->
-//       separate_frames(rest, data_frames, [
-//         websocket.Control(control_frame),
-//         ..control_frames
-//       ])
-//     [data_frame, ..rest] ->
-//       separate_frames(rest, [data_frame, ..data_frames], control_frames)
-//   }
-// }
+type ResolveState(user_state, user_message) {
+  ResolveState(
+    socket: Socket,
+    transport: Transport,
+    handler: Handler(user_state, user_message),
+    next: WebsocketNext(user_state, InternalMessage(user_message)),
+  )
+}
 
 /// Processes a list of frames sequentially
-fn handle_frames(
-  frames: List(websocks.Frame),
-  conn: WebsocketConnection,
-  handler: Handler(user_state, user_message),
-  next: WebsocketNext(user_state, InternalMessage(user_message)),
-) -> WebsocketNext(user_state, InternalMessage(user_message)) {
-  case frames, next {
-    // Early termination cases
-    _, NormalStop -> NormalStop
-    _, AbnormalStop(reason) -> AbnormalStop(reason)
-
-    // No more frames - finish
-    [], next -> next
-
-    // Control frames
-    [websocks.Ping(payload), ..rest], Continue(user_state, _) -> {
+fn handle_frame(
+  state: ResolveState(user_state, user_message),
+  context: websocks.Context,
+  frame: websocks.Frame,
+) -> websocks.ResolveNext(ResolveState(user_state, user_message)) {
+  case frame {
+    websocks.Control(websocks.Ping(payload)) -> {
       case bit_array.byte_size(payload) {
         size if size > 125 ->
-          AbnormalStop(
-            "control frames are only allowed to have payload up to and including 125 octets",
+          websocks.Stop(
+            ResolveState(
+              ..state,
+              next: AbnormalStop(
+                "control frames are only allowed to have payload up to and including 125 octets",
+              ),
+            ),
           )
         _ -> {
           let sent =
             transport.send(
-              conn.transport,
-              conn.socket,
+              state.transport,
+              state.socket,
               websocks.encode_pong_frame(payload, None)
                 |> bytes_tree.from_bit_array(),
             )
 
           case sent {
-            Ok(Nil) ->
-              handle_frames(rest, conn, handler, Continue(user_state, None))
-            Error(_) -> AbnormalStop(failed_pong)
+            Ok(Nil) -> websocks.Continue(state)
+            Error(_) ->
+              websocks.Stop(
+                ResolveState(..state, next: AbnormalStop(failed_pong)),
+              )
           }
         }
       }
     }
-    [websocks.Close(reason), ..], Continue(..) -> {
+    websocks.Control(websocks.Close(reason)) -> {
       let _ =
         transport.send(
-          conn.transport,
-          conn.socket,
+          state.transport,
+          state.socket,
           websocks.encode_close_frame(reason, None)
             |> bytes_tree.from_bit_array(),
         )
 
-      NormalStop
+      websocks.Stop(ResolveState(..state, next: NormalStop))
     }
 
-    // Data frames
-    [frame, ..rest], Continue(user_state, selector) -> {
+    frame -> {
+      let assert Continue(user_state, selector) = state.next
+
+      let conn = WebsocketConnection(state.transport, state.socket, context)
+
       let call =
-        exception.rescue(fn() { handler(conn, user_state, Frame(frame)) })
+        exception.rescue(fn() { state.handler(conn, user_state, Frame(frame)) })
 
       case call {
         Ok(Continue(user_state, new_selector)) -> {
@@ -410,16 +382,15 @@ fn handle_frames(
             |> option.or(selector)
             |> option.map(process.merge_selector(create_socket_selector(), _))
 
-          handle_frames(
-            rest,
-            conn,
-            handler,
-            Continue(user_state, next_selector),
+          websocks.Continue(
+            ResolveState(..state, next: Continue(user_state, next_selector)),
           )
         }
-        Ok(NormalStop) -> NormalStop
-        Ok(AbnormalStop(reason)) -> AbnormalStop(reason)
-        Error(_) -> AbnormalStop(crashed)
+        Ok(NormalStop) -> websocks.Stop(ResolveState(..state, next: NormalStop))
+        Ok(AbnormalStop(reason)) ->
+          websocks.Stop(ResolveState(..state, next: AbnormalStop(reason)))
+        Error(_) ->
+          websocks.Stop(ResolveState(..state, next: AbnormalStop(crashed)))
       }
     }
   }
