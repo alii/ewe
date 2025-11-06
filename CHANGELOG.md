@@ -1,6 +1,6 @@
 # Changelog
 
-# v2.0.3
+# v2.0.3 - 06.11.2025
 
 - Replace `gramps` with `websocks` package
 - Remove alias names for internal stream modules
