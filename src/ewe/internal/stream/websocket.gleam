@@ -274,7 +274,7 @@ fn handle_valid_packet(
 ) -> ActorNext(user_state, user_message) {
   let conn = WebsocketConnection(transport, socket, state.context)
   let result =
-    websocks.process_incomming_frames(
+    websocks.process_incoming_frames(
       data,
       state.context,
       ResolveState(

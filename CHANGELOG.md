@@ -5,6 +5,7 @@
 - Replace `gramps` with `websocks` package
 - Remove alias names for internal stream modules
 - Improve script that change documentation
+- Move `gleam_crypto` package as dev dependency 
 
 # v2.0.2
 

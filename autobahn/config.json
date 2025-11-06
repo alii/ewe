@@ -3,16 +3,13 @@
   "servers": [
     {
       "url": "ws://localhost:8080",
-      "agent": "unreleased"
+      "agent": "ewe"
     }
   ],
   "cases": [
     "*"
   ],
-  "exclude-cases": [
-    "12.*",
-    "13.*"
-  ],
+  "exclude-cases": [],
   "exclude-agent-cases": {},
   "optioms": {
     "failByDrop": false
