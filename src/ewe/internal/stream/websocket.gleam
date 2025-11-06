@@ -2,24 +2,21 @@
 // IMPORTS
 // -----------------------------------------------------------------------------
 import gleam/bit_array
-import gleam/bytes_tree.{type BytesTree}
+import gleam/bytes_tree
 import gleam/dynamic/decode
 import gleam/erlang/atom
 import gleam/erlang/process.{type Selector, type Subject}
-import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import gleam/string
 import logging
 
+import websocks
+
 import glisten/socket.{type Socket, type SocketReason}
 import glisten/socket/options.{ActiveMode, Count}
 import glisten/transport.{type Transport}
-
-// TODO: replace this once gramps changes are published
-import ewe/internal/gramps/websocket.{type Frame, CloseFrame, PingFrame}
-import ewe/internal/gramps/websocket/compression
 
 import ewe/internal/exception
 
@@ -32,19 +29,19 @@ pub type WebsocketConnection {
   WebsocketConnection(
     transport: Transport,
     socket: Socket,
-    deflate: Option(compression.Context),
+    context: websocks.Context,
   )
 }
 
 // Messages that can be sent to or received from the WebSocket
 pub type WebsocketMessage(user_message) {
-  WebsocketFrame(Frame)
+  Frame(websocks.Frame)
   UserMessage(user_message)
 }
 
 // Control flow for WebSocket message handling
 pub type WebsocketNext(user_state, user_message) {
-  Continue(user_state, Option(Selector(user_message)))
+  Continue(user_state: user_state, selector: Option(Selector(user_message)))
   NormalStop
   AbnormalStop(reason: String)
 }
@@ -55,12 +52,7 @@ pub type WebsocketNext(user_state, user_message) {
 
 // Internal state maintained by the WebSocket actor
 type WebsocketState(user_state) {
-  WebsocketState(
-    user_state: user_state,
-    per_message_deflate: Option(compression.Compression),
-    buffer: BitArray,
-    awaiting_frames: List(websocket.ParsedFrame),
-  )
+  WebsocketState(user_state: user_state, context: websocks.Context)
 }
 
 // Type alias for actor next steps
@@ -110,19 +102,19 @@ const non_owning_process = "Sending WebSocket message from non-owning process"
 // COMPRESSION UTILITIES
 // -----------------------------------------------------------------------------
 
-/// Gets the deflate context from the compression option
-fn get_deflate(
-  compression: Option(compression.Compression),
-) -> Option(compression.Context) {
-  option.map(compression, fn(compression) { compression.deflate })
-}
+// /// Gets the deflate context from the compression option
+// fn get_deflate(
+//   compression: Option(compression.Compression),
+// ) -> Option(compression.Context) {
+//   option.map(compression, fn(compression) { compression.deflate })
+// }
 
-/// Gets the inflate context from the compression option
-fn get_inflate(
-  compression: Option(compression.Compression),
-) -> Option(compression.Context) {
-  option.map(compression, fn(compression) { compression.inflate })
-}
+// /// Gets the inflate context from the compression option
+// fn get_inflate(
+//   compression: Option(compression.Compression),
+// ) -> Option(compression.Context) {
+//   option.map(compression, fn(compression) { compression.inflate })
+// }
 
 // -----------------------------------------------------------------------------
 // SELECTOR UTILITIES
@@ -167,40 +159,7 @@ fn user_selector(
 // SOCKET UTILITIES
 // -----------------------------------------------------------------------------
 
-/// Sets socket to active mode for one message delivery
-// fn set_socket_active_once(transport: Transport, socket: Socket) -> Nil {
-//   // echo transport.get_socket_opts(transport, socket, [atom.create("active")])
-
-//   let _ = transport.set_opts(transport, socket, [ActiveMode(Once)])
-
-//   // echo transport.get_socket_opts(transport, socket, [atom.create("active")])
-
-//   Nil
-// }
-
 const socket_active_count = 100
-
-// fn set_socket_active_smart(
-//   transport: Transport,
-//   socket: Socket,
-//   count: Int,
-// ) -> Int {
-//   echo #(
-//     count,
-//     transport.get_socket_opts(transport, socket, [atom.create("active")]),
-//   )
-
-//   case count {
-//     0 -> {
-//       let _ =
-//         transport.set_opts(transport, socket, [
-//           ActiveMode(Count(socket_active_count)),
-//         ])
-//       socket_active_count
-//     }
-//     _ -> count - 1
-//   }
-// }
 
 // -----------------------------------------------------------------------------
 // PUBLIC API
@@ -217,47 +176,48 @@ pub fn start(
   permessage_deflate: Bool,
 ) -> Result(actor.Started(Nil), actor.StartError) {
   actor.new_with_initialiser(1000, fn(subject) {
-    let takeovers = websocket.get_context_takeovers(extensions)
-    let deflate = case permessage_deflate {
-      True -> Some(compression.init(takeovers))
+    let context_takeovers = websocks.get_context_takeovers(extensions)
+    let compression = case permessage_deflate {
+      True -> Some(context_takeovers)
       False -> None
     }
+    let context = websocks.create_context(compression)
 
-    let conn = WebsocketConnection(transport, socket, get_deflate(deflate))
-
-    let #(user_state, user_selector) = on_init(conn, process.new_selector())
+    let #(user_state, user_selector) =
+      WebsocketConnection(transport, socket, context)
+      |> on_init(process.new_selector())
 
     let selector =
       process.map_selector(user_selector, User)
       |> process.merge_selector(create_socket_selector())
 
-    let ws_state =
-      WebsocketState(
-        user_state:,
-        per_message_deflate: deflate,
-        buffer: <<>>,
-        awaiting_frames: [],
-      )
-
-    actor.initialised(ws_state)
+    WebsocketState(user_state:, context:)
+    |> actor.initialised()
     |> actor.selecting(selector)
     |> actor.returning(subject)
     |> Ok
   })
   |> actor.on_message(fn(state, msg) {
-    let conn =
-      WebsocketConnection(
-        transport,
-        socket,
-        get_deflate(state.per_message_deflate),
-      )
-
     case msg {
-      Packet(data) -> handle_valid_packet(state, conn, data, handler, on_close)
-      Close -> handle_close(on_close, state, conn, None)
+      Packet(data) ->
+        handle_valid_packet(transport, socket, state, data, handler, on_close)
       User(user_message) ->
-        handle_user_message(state, conn, user_message, handler, on_close)
-      Invalid -> handle_close(on_close, state, conn, Some(malformed))
+        handle_user_message(
+          transport,
+          socket,
+          state,
+          user_message,
+          handler,
+          on_close,
+        )
+      Close -> {
+        let conn = WebsocketConnection(transport, socket, state.context)
+        handle_close(on_close, state, conn, None)
+      }
+      Invalid -> {
+        let conn = WebsocketConnection(transport, socket, state.context)
+        handle_close(on_close, state, conn, Some(malformed))
+      }
       TcpPassive -> {
         let _ =
           transport.set_opts(transport, socket, [
@@ -273,15 +233,16 @@ pub fn start(
 
 /// Sends a frame to the WebSocket
 pub fn send_frame(
-  encoder: fn(data, Option(compression.Context), Option(BitArray)) -> BytesTree,
+  encoder: fn(BitArray, websocks.Context, Option(BitArray)) -> BitArray,
   transport: Transport,
   socket: Socket,
-  deflate: Option(compression.Context),
-  data: data,
+  context: websocks.Context,
+  payload: BitArray,
 ) -> Result(Nil, SocketReason) {
   let frame =
     exception.rescue(fn() {
-      encoder(data, deflate, option.None)
+      encoder(payload, context, option.None)
+      |> bytes_tree.from_bit_array()
       |> transport.send(transport, socket, _)
     })
 
@@ -304,197 +265,115 @@ pub fn send_frame(
 
 /// Handles incoming packet data, decoding frames and processing them
 fn handle_valid_packet(
+  transport: Transport,
+  socket: Socket,
   state: WebsocketState(user_state),
-  conn: WebsocketConnection,
   data: BitArray,
   handler: Handler(user_state, user_message),
   on_close: OnClose(user_state),
 ) -> ActorNext(user_state, user_message) {
-  let buffer = <<state.buffer:bits, data:bits>>
-
-  let decoded =
-    websocket.decode_many_frames_result(
-      buffer,
-      get_inflate(state.per_message_deflate),
-      [],
+  let conn = WebsocketConnection(transport, socket, state.context)
+  let result =
+    websocks.process_incoming_frames(
+      data,
+      state.context,
+      ResolveState(
+        socket:,
+        transport:,
+        handler:,
+        next: Continue(state.user_state, None),
+      ),
+      handle_frame,
     )
 
-  case decoded {
-    Ok(#(frames, rest)) ->
-      handle_frames_processing(state, conn, frames, rest, handler, on_close)
-    Error(websocket.NeedMoreDataAccumulated(parsed, rest)) -> {
-      actor.continue(
-        WebsocketState(
-          ..state,
-          buffer: rest,
-          // NOTE: idk if its correct
-          awaiting_frames: list.append(state.awaiting_frames, parsed),
-        ),
-      )
+  case result {
+    Ok(#(resolved_state, context)) -> {
+      case resolved_state.next {
+        Continue(user_state, selector) -> {
+          let next = actor.continue(WebsocketState(user_state:, context:))
+
+          case selector {
+            Some(selector) -> actor.with_selector(next, selector)
+            None -> next
+          }
+        }
+        NormalStop -> handle_close(on_close, state, conn, None)
+        AbnormalStop(reason) ->
+          handle_close(on_close, state, conn, Some(reason))
+      }
     }
-    Error(websocket.ContainsInvalidFrame) -> {
+    Error(violation) -> {
+      echo violation as "violation during frame resolving"
       handle_close(on_close, state, conn, Some(malformed))
     }
   }
 }
 
-/// Handles frames processing
-fn handle_frames_processing(
-  state: WebsocketState(user_state),
-  conn: WebsocketConnection,
-  frames: List(websocket.ParsedFrame),
-  rest: BitArray,
-  handler: Handler(user_state, user_message),
-  on_close: OnClose(user_state),
-) {
-  let frames = list.append(state.awaiting_frames, frames)
-
-  let #(data_frames, control_frames) = separate_frames(frames, [], [])
-
-  let control_result = case control_frames {
-    [] -> Continue(state.user_state, None)
-    _ ->
-      loop_by_frames(
-        control_frames,
-        conn,
-        handler,
-        Continue(state.user_state, None),
-      )
-  }
-
-  case control_result {
-    NormalStop -> handle_close(on_close, state, conn, None)
-    AbnormalStop(reason) -> handle_close(on_close, state, conn, Some(reason))
-    Continue(_, _) -> {
-      let aggregated =
-        websocket.aggregate_frames(
-          data_frames,
-          None,
-          [],
-          get_inflate(state.per_message_deflate),
-        )
-
-      case aggregated {
-        Ok([]) -> {
-          actor.continue(
-            WebsocketState(..state, buffer: rest, awaiting_frames: data_frames),
-          )
-        }
-        Ok(data_frames) -> {
-          let next =
-            loop_by_frames(
-              data_frames,
-              conn,
-              handler,
-              Continue(state.user_state, None),
-            )
-
-          case next {
-            Continue(user_state, selector) -> {
-              let next =
-                actor.continue(
-                  WebsocketState(
-                    ..state,
-                    user_state:,
-                    buffer: rest,
-                    awaiting_frames: [],
-                  ),
-                )
-
-              case selector {
-                Some(selector) -> actor.with_selector(next, selector)
-                None -> next
-              }
-            }
-            NormalStop -> handle_close(on_close, state, conn, None)
-            AbnormalStop(reason) ->
-              handle_close(on_close, state, conn, Some(reason))
-          }
-        }
-        Error(Nil) -> handle_close(on_close, state, conn, Some(malformed))
-      }
-    }
-  }
-}
-
-/// Separates frames into data and control frames
-fn separate_frames(
-  frames: List(websocket.ParsedFrame),
-  data_frames: List(websocket.ParsedFrame),
-  control_frames: List(websocket.Frame),
-) -> #(List(websocket.ParsedFrame), List(websocket.Frame)) {
-  case frames {
-    [] -> #(list.reverse(data_frames), list.reverse(control_frames))
-    [websocket.Complete(websocket.Control(control_frame)), ..rest] ->
-      separate_frames(rest, data_frames, [
-        websocket.Control(control_frame),
-        ..control_frames
-      ])
-    [data_frame, ..rest] ->
-      separate_frames(rest, [data_frame, ..data_frames], control_frames)
-  }
+type ResolveState(user_state, user_message) {
+  ResolveState(
+    socket: Socket,
+    transport: Transport,
+    handler: Handler(user_state, user_message),
+    next: WebsocketNext(user_state, InternalMessage(user_message)),
+  )
 }
 
 /// Processes a list of frames sequentially
-fn loop_by_frames(
-  frames: List(Frame),
-  conn: WebsocketConnection,
-  handler: Handler(user_state, user_message),
-  next: WebsocketNext(user_state, InternalMessage(user_message)),
-) -> WebsocketNext(user_state, InternalMessage(user_message)) {
-  case frames, next {
-    // Early termination cases
-    _, NormalStop -> NormalStop
-    _, AbnormalStop(reason) -> AbnormalStop(reason)
-
-    // No more frames - finish
-    [], next -> next
-
-    // Control frames
-    [websocket.Control(PingFrame(payload)), ..rest], Continue(user_state, _) -> {
+fn handle_frame(
+  state: ResolveState(user_state, user_message),
+  context: websocks.Context,
+  frame: websocks.Frame,
+) -> websocks.ResolveNext(ResolveState(user_state, user_message)) {
+  case frame {
+    websocks.Control(websocks.Ping(payload)) -> {
       case bit_array.byte_size(payload) {
         size if size > 125 ->
-          AbnormalStop(
-            "control frames are only allowed to have payload up to and including 125 octets",
+          websocks.Stop(
+            ResolveState(
+              ..state,
+              next: AbnormalStop(
+                "control frames are only allowed to have payload up to and including 125 octets",
+              ),
+            ),
           )
         _ -> {
           let sent =
             transport.send(
-              conn.transport,
-              conn.socket,
-              websocket.encode_pong_frame(payload, None),
+              state.transport,
+              state.socket,
+              websocks.encode_pong_frame(payload, None)
+                |> bytes_tree.from_bit_array(),
             )
 
           case sent {
-            Ok(Nil) ->
-              loop_by_frames(rest, conn, handler, Continue(user_state, None))
-            Error(_) -> AbnormalStop(failed_pong)
+            Ok(Nil) -> websocks.Continue(state)
+            Error(_) ->
+              websocks.Stop(
+                ResolveState(..state, next: AbnormalStop(failed_pong)),
+              )
           }
         }
       }
     }
-    [websocket.Control(CloseFrame(reason)), ..], Continue(_, _) -> {
+    websocks.Control(websocks.Close(reason)) -> {
       let _ =
         transport.send(
-          conn.transport,
-          conn.socket,
-          websocket.encode_close_frame(reason, None),
+          state.transport,
+          state.socket,
+          websocks.encode_close_frame(reason, None)
+            |> bytes_tree.from_bit_array(),
         )
 
-      NormalStop
+      websocks.Stop(ResolveState(..state, next: NormalStop))
     }
 
-    // NOTE: unsure if its should be here
-    [websocket.Continuation(_, _), ..], Continue(_, _) -> {
-      AbnormalStop("Unexpected continuation frame")
-    }
+    frame -> {
+      let assert Continue(user_state, selector) = state.next
 
-    // Data frames
-    [frame, ..rest], Continue(user_state, selector) -> {
+      let conn = WebsocketConnection(state.transport, state.socket, context)
+
       let call =
-        exception.rescue(fn() {
-          handler(conn, user_state, WebsocketFrame(frame))
-        })
+        exception.rescue(fn() { state.handler(conn, user_state, Frame(frame)) })
 
       case call {
         Ok(Continue(user_state, new_selector)) -> {
@@ -503,16 +382,15 @@ fn loop_by_frames(
             |> option.or(selector)
             |> option.map(process.merge_selector(create_socket_selector(), _))
 
-          loop_by_frames(
-            rest,
-            conn,
-            handler,
-            Continue(user_state, next_selector),
+          websocks.Continue(
+            ResolveState(..state, next: Continue(user_state, next_selector)),
           )
         }
-        Ok(NormalStop) -> NormalStop
-        Ok(AbnormalStop(reason)) -> AbnormalStop(reason)
-        Error(_) -> AbnormalStop(crashed)
+        Ok(NormalStop) -> websocks.Stop(ResolveState(..state, next: NormalStop))
+        Ok(AbnormalStop(reason)) ->
+          websocks.Stop(ResolveState(..state, next: AbnormalStop(reason)))
+        Error(_) ->
+          websocks.Stop(ResolveState(..state, next: AbnormalStop(crashed)))
       }
     }
   }
@@ -520,12 +398,14 @@ fn loop_by_frames(
 
 /// Handles user messages sent to the WebSocket
 fn handle_user_message(
+  transport: Transport,
+  socket: Socket,
   state: WebsocketState(user_state),
-  conn: WebsocketConnection,
   user_message: user_message,
   handler: Handler(user_state, user_message),
   on_close: OnClose(user_state),
 ) -> ActorNext(user_state, user_message) {
+  let conn = WebsocketConnection(transport, socket, state.context)
   let call =
     exception.rescue(fn() {
       handler(conn, state.user_state, UserMessage(user_message))
@@ -563,11 +443,7 @@ fn handle_close(
   conn: WebsocketConnection,
   abnormal_reason: Option(String),
 ) -> actor.Next(WebsocketState(user_state), InternalMessage(user_message)) {
-  option.map(state.per_message_deflate, fn(compression) {
-    compression.close(compression.deflate)
-    compression.close(compression.inflate)
-  })
-
+  websocks.close_context(state.context)
   on_close(conn, state.user_state)
 
   case abnormal_reason {

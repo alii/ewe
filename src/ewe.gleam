@@ -1,94 +1,139 @@
-//// <style>
-////   .content > h4,
-////   .content > ul {
-////     display: none;
-////   }
-//// </style>
 //// <script>
-//// // https://gitlab.com/arkandos/smol/-/blob/main/src/smol.gleam?ref_type=heads
-//// (callback => document.readyState !== 'loading' ? callback() : document.addEventListener('DOMContentLoaded', callback, { once: true }))(() => {
-////   const list = document.querySelector('.sidebar > ul:last-of-type')
+//// const docs = [
+////   {
+////     header: "IP Address",
+////     functions: ["ip_address_to_string"]
+////   },
+////   {
+////     header: "Information",
+////     functions: [
+////       "get_client_info",
+////       "get_server_info"
+////     ]
+////   },
+////   {
+////     header: "Builder",
+////     functions: [
+////       "new",
+////       "bind",
+////       "bind_all",
+////       "listening",
+////       "listening_random",
+////       "enable_ipv6",
+////       "enable_tls",
+////       "with_name",
+////       "quiet",
+////       "idle_timeout",
+////       "on_start",
+////       "on_crash"
+////     ]
+////   },
+////   {
+////     header: "Server",
+////     functions: [
+////       "start",
+////       "supervised"
+////     ]
+////   },
+////   {
+////     header: "Request",
+////     functions: [
+////       "read_body",
+////       "stream_body"
+////     ]
+////   },
+////   {
+////     header: "Response",
+////     functions: ["file"]
+////   },
+////   {
+////     header: "Chunked Response",
+////     functions: [
+////       "chunked_body",
+////       "send_chunk",
+////       "chunked_continue",
+////       "chunked_stop",
+////       "chunked_stop_abnormal"
+////     ]
+////   },
+////   {
+////     header: "Websocket",
+////     functions: [
+////       "upgrade_websocket",
+////       "send_binary_frame",
+////       "send_text_frame",
+////       "websocket_continue",
+////       "websocket_continue_with_selector",
+////       "websocket_stop",
+////       "websocket_stop_abnormal"
+////     ]
+////   },
+////   {
+////     header: "Server-Sent Events",
+////     functions: [
+////       "sse",
+////       "event",
+////       "event_name",
+////       "event_id",
+////       "event_retry",
+////       "send_event",
+////       "sse_continue",
+////       "sse_stop",
+////       "sse_stop_abnormal"
+////     ]
+////   }
+//// ]
+//// 
+//// const callback = () => {
+////   const list = document.querySelector(".sidebar > ul:last-of-type")
 ////   const sortedLists = document.createDocumentFragment()
 ////   const sortedMembers = document.createDocumentFragment()
-////
-////   for (const header of document.querySelectorAll('main > h4')) {
+//// 
+////   for (const section of docs) {
 ////     sortedLists.append((() => {
-////       const node = document.createElement('h3')
-////       node.append(header.textContent)
+////       const node = document.createElement("h3")
+////       node.append(section.header)
 ////       return node
 ////     })())
 ////     sortedMembers.append((() => {
-////       const node = document.createElement('h2')
-////       node.append(header.textContent)
+////       const node = document.createElement("h2")
+////       node.append(section.header)
 ////       return node
 ////     })())
-////
-////     const sortedList = document.createElement('ul')
+//// 
+////     const sortedList = document.createElement("ul")
 ////     sortedLists.append(sortedList)
-////
-////     for (const anchor of header.nextElementSibling.querySelectorAll('a')) {
-////       const href = anchor.getAttribute('href')
-////       const member = document.querySelector(`.member:has(h2 > a[href="${href}"])`)
+//// 
+////     const sortedFunctions = [...section.functions].sort()
+//// 
+////     for (const funcName of sortedFunctions) {
+////       const href = `#${funcName}`
+////       const member = document.querySelector(
+////         `.member:has(h2 > a[href="${href}"])`
+////       )
 ////       const sidebar = list.querySelector(`li:has(a[href="${href}"])`)
 ////       sortedList.append(sidebar)
 ////       sortedMembers.append(member)
 ////     }
 ////   }
-////
-////   document.querySelector('.sidebar').insertBefore(sortedLists, list)
-////   document.querySelector('.module-members:has(#module-values)').insertBefore(sortedMembers, document.querySelector('#module-values').nextSibling)
-//// })
+//// 
+////   document.querySelector(".sidebar").insertBefore(sortedLists, list)
+////   document
+////     .querySelector(".module-members:has(#module-values)")
+////     .insertBefore(
+////       sortedMembers,
+////       document.querySelector("#module-values").nextSibling
+////     )
+//// }
+//// 
+//// document.readyState !== "loading"
+////   ? callback()
+////   : document.addEventListener(
+////     "DOMContentLoaded",
+////     callback,
+////     { once: true }
+////   )
 //// </script>
-//// #### IP Address
-//// - [ip_address_to_string](#ip_address_to_string)
-//// #### Information
-//// - [get_client_info](#get_client_info)
-//// - [get_server_info](#get_server_info)
-//// #### Builder
-//// - [new](#new)
-//// - [bind](#bind)
-//// - [bind_all](#bind_all)
-//// - [listening](#listening)
-//// - [listening_random](#listening_random)
-//// - [enable_ipv6](#enable_ipv6)
-//// - [enable_tls](#enable_tls)
-//// - [with_name](#with_name)
-//// - [quiet](#quiet)
-//// - [idle_timeout](#idle_timeout)
-//// - [on_start](#on_start)
-//// - [on_crash](#on_crash)
-//// #### Server
-//// - [start](#start)
-//// - [supervised](#supervised)
-//// #### Request
-//// - [read_body](#read_body)
-//// - [stream_body](#stream_body)
-//// #### Response
-//// - [file](#file)
-//// #### Chunked Response
-//// - [chunked_body](#chunked_body)
-//// - [send_chunk](#send_chunk)
-//// - [chunked_continue](#chunked_continue)
-//// - [chunked_stop](#chunked_stop)
-//// - [chunked_stop_abnormal](#chunked_stop_abnormal)
-//// #### Websocket
-//// - [upgrade_websocket](#upgrade_websocket)
-//// - [send_binary_frame](#send_binary_frame)
-//// - [send_text_frame](#send_text_frame)
-//// - [websocket_continue](#websocket_continue)
-//// - [websocket_continue_with_selector](#websocket_continue_with_selector)
-//// - [websocket_stop](#websocket_stop)
-//// - [websocket_stop_abnormal](#websocket_stop_abnormal)
-//// #### Server-Sent Events
-//// - [sse](#sse)
-//// - [event](#event)
-//// - [event_name](#event_name)
-//// - [event_id](#event_id)
-//// - [event_retry](#event_retry)
-//// - [send_event](#send_event)
-//// - [sse_continue](#sse_continue)
-//// - [sse_stop](#sse_stop)
-//// - [sse_stop_abnormal](#sse_stop_abnormal)
 
 // -----------------------------------------------------------------------------
 // IMPORTS
@@ -111,20 +156,19 @@ import gleam/result
 import gleam/string_tree.{type StringTree}
 import logging
 
+import websocks
+
 import glisten
 import glisten/internal/listener
 import glisten/socket/options as glisten_options
 import glisten/transport
 
-// TODO: replace this once gramps changes are published
-import ewe/internal/gramps/websocket as ws
-
 import ewe/internal/file
 import ewe/internal/handler
 import ewe/internal/http1 as ewe_http
-import ewe/internal/stream/chunked as ewe_chunked
-import ewe/internal/stream/sse as ewe_sse
-import ewe/internal/stream/websocket as ewe_ws
+import ewe/internal/stream/chunked
+import ewe/internal/stream/sse
+import ewe/internal/stream/websocket
 
 // -----------------------------------------------------------------------------
 // CONNECTION
@@ -665,7 +709,7 @@ fn consumer_adapter(
 
 /// Represents a chunked response body. This type is used to send a chunked response to the client.
 pub type ChunkedBody =
-  ewe_chunked.ChunkedBody
+  chunked.ChunkedBody
 
 /// Represents an instruction on how chunked response should be processed.
 ///
@@ -699,11 +743,11 @@ pub fn chunked_stop_abnormal(reason: String) -> ChunkedNext(user_state) {
 
 fn to_internal_chunked_next(
   next: ChunkedNext(user_state),
-) -> ewe_chunked.ChunkedNext(user_state) {
+) -> chunked.ChunkedNext(user_state) {
   case next {
-    ChunkedContinue(user_state) -> ewe_chunked.Continue(user_state)
-    ChunkedStop -> ewe_chunked.NormalStop
-    ChunkedAbnormalStop(reason) -> ewe_chunked.AbnormalStop(reason)
+    ChunkedContinue(user_state) -> chunked.Continue(user_state)
+    ChunkedStop -> chunked.NormalStop
+    ChunkedAbnormalStop(reason) -> chunked.AbnormalStop(reason)
   }
 }
 
@@ -735,13 +779,13 @@ pub fn chunked_body(
   let socket = req.body.socket
   let factory_name = req.body.factory_name
 
-  case ewe_chunked.send_response(resp, transport, socket) {
+  case chunked.send_response(resp, transport, socket) {
     Ok(Nil) -> {
       let supervisor = factory.get_by_name(factory_name)
 
       let start_result =
         factory.start_child(supervisor, fn() {
-          ewe_chunked.start(transport, socket, on_init, handler, on_close)
+          chunked.start(transport, socket, on_init, handler, on_close)
         })
 
       case start_result {
@@ -762,7 +806,7 @@ pub fn send_chunk(
   body: ChunkedBody,
   chunk: BitArray,
 ) -> Result(Nil, glisten.SocketReason) {
-  ewe_chunked.send_chunk(body.transport, body.socket, chunk)
+  chunked.send_chunk(body.transport, body.socket, chunk)
 }
 
 // -----------------------------------------------------------------------------
@@ -772,7 +816,7 @@ pub fn send_chunk(
 /// Represents a WebSocket connection between a client and a server.
 ///
 pub type WebsocketConnection =
-  ewe_ws.WebsocketConnection
+  websocket.WebsocketConnection
 
 /// Represents an instruction on how WebSocket connection should proceed.
 ///
@@ -822,12 +866,12 @@ pub fn websocket_stop_abnormal(
 
 fn to_internal_websocket_next(
   next: WebsocketNext(user_state, user_message),
-) -> ewe_ws.WebsocketNext(user_state, user_message) {
+) -> websocket.WebsocketNext(user_state, user_message) {
   case next {
     WebsocketContinue(user_state, selector) ->
-      ewe_ws.Continue(user_state, selector)
-    WebsocketNormalStop -> ewe_ws.NormalStop
-    WebsocketAbnormalStop(reason) -> ewe_ws.AbnormalStop(reason)
+      websocket.Continue(user_state, selector)
+    WebsocketNormalStop -> websocket.NormalStop
+    WebsocketAbnormalStop(reason) -> websocket.AbnormalStop(reason)
   }
 }
 
@@ -846,20 +890,13 @@ pub type WebsocketMessage(user_message) {
 }
 
 fn transform_websocket_message(
-  message: ewe_ws.WebsocketMessage(user_message),
+  message: websocket.WebsocketMessage(user_message),
 ) -> Result(WebsocketMessage(user_message), Nil) {
-  // NOTE: see "https://github.com/rawhat/gramps/pull/7"
   case message {
-    ewe_ws.WebsocketFrame(ws.Data(frame)) -> {
-      ws.match_data_frame(
-        frame,
-        on_text: fn(payload, _) {
-          bit_array.to_string(payload) |> result.map(Text)
-        },
-        on_binary: fn(payload, _) { Ok(Binary(payload)) },
-      )
-    }
-    ewe_ws.UserMessage(user_message) -> Ok(User(user_message))
+    websocket.Frame(websocks.Text(payload)) ->
+      bit_array.to_string(payload) |> result.map(Text)
+    websocket.Frame(websocks.Binary(payload)) -> Ok(Binary(payload))
+    websocket.UserMessage(user_message) -> Ok(User(user_message))
     _ -> Error(Nil)
   }
 }
@@ -905,7 +942,7 @@ pub fn upgrade_websocket(
       let supervisor = factory.get_by_name(factory_name)
       let start_result =
         factory.start_child(supervisor, fn() {
-          ewe_ws.start(
+          websocket.start(
             transport,
             socket,
             on_init,
@@ -935,11 +972,11 @@ pub fn send_binary_frame(
   conn: WebsocketConnection,
   bits: BitArray,
 ) -> Result(Nil, glisten.SocketReason) {
-  ewe_ws.send_frame(
-    ws.encode_binary_frame,
+  websocket.send_frame(
+    websocks.encode_binary_frame,
     conn.transport,
     conn.socket,
-    conn.deflate,
+    conn.context,
     bits,
   )
 }
@@ -950,12 +987,12 @@ pub fn send_text_frame(
   conn: WebsocketConnection,
   text: String,
 ) -> Result(Nil, glisten.SocketReason) {
-  ewe_ws.send_frame(
-    ws.encode_text_frame,
+  websocket.send_frame(
+    websocks.encode_text_frame,
     conn.transport,
     conn.socket,
-    conn.deflate,
-    text,
+    conn.context,
+    bit_array.from_string(text),
   )
 }
 
@@ -966,7 +1003,7 @@ pub fn send_text_frame(
 /// Represents a Server-Sent Events connection between a client and a server.
 ///
 pub type SSEConnection =
-  ewe_sse.SSEConnection
+  sse.SSEConnection
 
 /// Represents an instruction on how Server-Sent Events connection should
 /// proceed.
@@ -999,13 +1036,11 @@ pub fn sse_stop_abnormal(reason: String) -> SSENext(user_state) {
   SSEAbnormalStop(reason)
 }
 
-fn to_internal_sse_next(
-  next: SSENext(user_state),
-) -> ewe_sse.SSENext(user_state) {
+fn to_internal_sse_next(next: SSENext(user_state)) -> sse.SSENext(user_state) {
   case next {
-    SSEContinue(user_state) -> ewe_sse.Continue(user_state)
-    SSENormalStop -> ewe_sse.NormalStop
-    SSEAbnormalStop(reason) -> ewe_sse.AbnormalStop(reason)
+    SSEContinue(user_state) -> sse.Continue(user_state)
+    SSENormalStop -> sse.NormalStop
+    SSEAbnormalStop(reason) -> sse.AbnormalStop(reason)
   }
 }
 
@@ -1020,31 +1055,31 @@ fn to_internal_sse_next(
 /// `ewe.event_id`, and `ewe.event_retry`.
 ///
 pub type SSEEvent =
-  ewe_sse.SSEEvent
+  sse.SSEEvent
 
 /// Creates a new SSE event with the given data. Use `ewe.event_name`,
 /// `ewe.event_id`, and `ewe.event_retry` to modify other fields of the event.
 ///
 pub fn event(data: String) -> SSEEvent {
-  ewe_sse.SSEEvent(event: None, data:, id: None, retry: None)
+  sse.SSEEvent(event: None, data:, id: None, retry: None)
 }
 
 /// Sets the name of the event.
 ///
 pub fn event_name(event: SSEEvent, name: String) -> SSEEvent {
-  ewe_sse.SSEEvent(..event, event: Some(name))
+  sse.SSEEvent(..event, event: Some(name))
 }
 
 /// Sets the ID of the event.
 ///
 pub fn event_id(event: SSEEvent, id: String) -> SSEEvent {
-  ewe_sse.SSEEvent(..event, id: Some(id))
+  sse.SSEEvent(..event, id: Some(id))
 }
 
 /// Sets the retry time of the event.
 ///
 pub fn event_retry(event: SSEEvent, retry: Int) -> SSEEvent {
-  ewe_sse.SSEEvent(..event, retry: Some(retry))
+  sse.SSEEvent(..event, retry: Some(retry))
 }
 
 /// Sets up the connection for Server-Sent Events.
@@ -1074,12 +1109,12 @@ pub fn sse(
   let socket = req.body.socket
   let factory_name = req.body.factory_name
 
-  case ewe_sse.send_response(transport, socket) {
+  case sse.send_response(transport, socket) {
     Ok(Nil) -> {
       let supervisor = factory.get_by_name(factory_name)
       let start_result =
         factory.start_child(supervisor, fn() {
-          ewe_sse.start(transport, socket, on_init, handler, on_close)
+          sse.start(transport, socket, on_init, handler, on_close)
         })
 
       case start_result {
@@ -1100,5 +1135,5 @@ pub fn send_event(
   conn: SSEConnection,
   event: SSEEvent,
 ) -> Result(Nil, glisten.SocketReason) {
-  ewe_sse.send_event(conn.transport, conn.socket, event)
+  sse.send_event(conn.transport, conn.socket, event)
 }
