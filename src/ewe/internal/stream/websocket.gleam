@@ -302,8 +302,8 @@ fn handle_valid_packet(
           handle_close(on_close, state, conn, Some(reason))
       }
     }
-    Error(violation) -> {
-      echo violation as "violation during frame resolving"
+    Error(_violation) -> {
+      // echo violation as "violation during frame resolving"
       handle_close(on_close, state, conn, Some(malformed))
     }
   }
