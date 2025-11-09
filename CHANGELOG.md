@@ -1,6 +1,6 @@
 # Changelog
 
-# Unreleased
+# v2.1.0 - 09.11.2025
 
 - Add `send_close_frame` function for the WebSocket API
 - Add `CloseCode` for various close frames
