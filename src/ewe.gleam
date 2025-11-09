@@ -62,6 +62,7 @@
 ////       "upgrade_websocket",
 ////       "send_binary_frame",
 ////       "send_text_frame",
+////       "send_close_frame",
 ////       "websocket_continue",
 ////       "websocket_continue_with_selector",
 ////       "websocket_stop",
@@ -864,6 +865,17 @@ pub fn websocket_stop_abnormal(
   WebsocketAbnormalStop(reason)
 }
 
+fn to_websocket_next(
+  next: websocket.WebsocketNext(user_state, user_message),
+) -> WebsocketNext(user_state, user_message) {
+  case next {
+    websocket.Continue(user_state, selector) ->
+      WebsocketContinue(user_state, selector)
+    websocket.NormalStop -> WebsocketNormalStop
+    websocket.AbnormalStop(reason) -> WebsocketAbnormalStop(reason)
+  }
+}
+
 fn to_internal_websocket_next(
   next: WebsocketNext(user_state, user_message),
 ) -> websocket.WebsocketNext(user_state, user_message) {
@@ -994,6 +1006,81 @@ pub fn send_text_frame(
     conn.context,
     bit_array.from_string(text),
   )
+}
+
+/// WebSocket close codes that can be sent when closing a connection. The `data` 
+/// parameter allows you to include payload up to 123 bytes in size. 
+/// 
+pub type CloseCode {
+  /// Standard graceful shutdown (1000). Use when connection completed 
+  /// successfully.
+  /// 
+  NormalClosure(data: String)
+  /// Invalid message format (1007). Received payload that doesn't match what 
+  /// you expected.
+  /// 
+  InvalidPayloadData(data: String)
+  /// Application policy violation (1008).Client broke your rules - failed
+  /// authentication, hit rate limits, or violated business logic.
+  /// 
+  PolicyViolation(data: String)
+  /// Message exceeds size limits (1009). Client sent something bigger than 
+  /// your application allows.
+  /// 
+  MessageTooBig(data: String)
+  /// Server encountered unexpected error (1011). Something went wrong on your 
+  /// side that prevents handling the connection.
+  /// 
+  InternalError(data: String)
+  /// Server is restarting (1012). Planned restart - clients can reconnect 
+  /// after a bit.
+  /// 
+  ServiceRestart(data: String)
+  /// Temporary server overload (1013). Use when server is temporarily 
+  /// unavailable, client should retry.
+  /// 
+  TryAgainLater(data: String)
+  /// Gateway/proxy received invalid response (1014). You're acting as a proxy 
+  /// and the upstream server gave you garbage.
+  /// 
+  BadGateway(data: String)
+  /// Custom close codes 3000-4999 for application-specific use.
+  /// 
+  CustomCloseCode(code: Int, data: String)
+  /// Close without a specific reason.
+  /// 
+  NoCloseReason
+}
+
+fn to_internal_close_code(code: CloseCode) -> websocks.CloseReason {
+  case code {
+    NormalClosure(data) -> websocks.NormalClosure(bit_array.from_string(data))
+    InvalidPayloadData(data) ->
+      websocks.InvalidPayloadData(bit_array.from_string(data))
+    PolicyViolation(data) ->
+      websocks.PolicyViolation(bit_array.from_string(data))
+    MessageTooBig(data) -> websocks.MessageTooBig(bit_array.from_string(data))
+    InternalError(data) -> websocks.InternalError(bit_array.from_string(data))
+    ServiceRestart(data) -> websocks.ServiceRestart(bit_array.from_string(data))
+    TryAgainLater(data) -> websocks.TryAgainLater(bit_array.from_string(data))
+    BadGateway(data) -> websocks.BadGateway(bit_array.from_string(data))
+    CustomCloseCode(code, data) ->
+      websocks.CustomCloseCode(code, bit_array.from_string(data))
+    NoCloseReason -> websocks.NoCloseReason
+  }
+}
+
+/// Sends a close frame to the websocket client. Once this function is called,
+/// no other frames can be sent on this connection. Returns how the WebSocket
+/// connection should proceed - make sure your handler returns this value.
+///
+pub fn send_close_frame(
+  conn: WebsocketConnection,
+  code: CloseCode,
+) -> WebsocketNext(user_state, user_message) {
+  to_internal_close_code(code)
+  |> websocket.send_close_frame(conn.transport, conn.socket, _)
+  |> to_websocket_next()
 }
 
 // -----------------------------------------------------------------------------

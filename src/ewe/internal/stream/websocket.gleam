@@ -259,6 +259,34 @@ pub fn send_frame(
   }
 }
 
+pub fn send_close_frame(
+  transport: Transport,
+  socket: Socket,
+  code: websocks.CloseReason,
+) -> WebsocketNext(user_state, user_message) {
+  let frame =
+    exception.rescue(fn() {
+      websocks.encode_close_frame(code, None)
+      |> bytes_tree.from_bit_array()
+      |> transport.send(transport, socket, _)
+    })
+
+  case frame {
+    Ok(Ok(Nil)) -> NormalStop
+    Ok(Error(reason)) ->
+      AbnormalStop("Failed to send close frame: " <> string.inspect(reason))
+    Error(reason) -> {
+      logging.log(
+        logging.Error,
+        "Frame should be sent from the WebSocket connection, but was sent from different process: "
+          <> string.inspect(reason),
+      )
+
+      panic as non_owning_process
+    }
+  }
+}
+
 // -----------------------------------------------------------------------------
 // MESSAGE HANDLING
 // -----------------------------------------------------------------------------

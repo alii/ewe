@@ -1,5 +1,10 @@
 # Changelog
 
+# Unreleased
+
+- Add `send_close_frame` function for the WebSocket API
+- Add `CloseCode` for various close frames
+
 # v2.0.3 - 06.11.2025
 
 - Replace `gramps` with `websocks` package
