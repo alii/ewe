@@ -11,6 +11,7 @@ import gleam/option.{type Option}
 import gleam/otp/actor
 import gleam/result
 import gleam/string_tree
+import glisten/socket/options.{Active, ActiveMode}
 
 import glisten/socket.{type Socket}
 import glisten/transport.{type Transport}
@@ -171,6 +172,8 @@ fn after_start(
 ) -> actor.Started(Nil) {
   let assert Ok(pid) = process.subject_owner(started.data)
   let _ = transport.controlling_process(transport, socket, pid)
+
+  let _ = transport.set_opts(transport, socket, [ActiveMode(Active)])
 
   actor.Started(..started, data: Nil)
 }
