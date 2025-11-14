@@ -1,5 +1,9 @@
 # Changelog
 
+# v2.1.1 - 14.11.2025
+
+- Bring back active socket option for SSE
+
 # v2.1.0 - 09.11.2025
 
 - Add `send_close_frame` function for the WebSocket API
