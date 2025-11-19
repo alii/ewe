@@ -5,14 +5,12 @@ import glisten
 import glisten/socket.{type Socket}
 import glisten/transport.{type Transport}
 
-// -----------------------------------------------------------------------------
-// TYPES
-// -----------------------------------------------------------------------------
-
-// Represents a reference to a file
+/// Reference to a file.
+/// 
 pub type IoDevice
 
-// Represents errors that can occur when opening a file
+/// Errors that can occur when opening a file.
+/// 
 pub type FileError {
   Enoent
   Eacces
@@ -20,22 +18,21 @@ pub type FileError {
   Eunknown(dynamic.Dynamic)
 }
 
-// Represents a file
+/// A file.
+/// 
 pub type File {
   File(descriptor: IoDevice, size: Int)
 }
 
-// Errors that can occur when sending a file
+/// Errors that can occur when sending a file.
+/// 
 pub type SendError {
   FileIssue(FileError)
   SocketIssue(glisten.SocketReason)
 }
 
-// -----------------------------------------------------------------------------
-// PUBLIC API
-// -----------------------------------------------------------------------------
-
-/// Sends a file to the client
+/// Sends a file to the client.
+/// 
 pub fn send(
   transport: Transport,
   socket: Socket,
@@ -58,10 +55,6 @@ pub fn send(
     }
   }
 }
-
-// -----------------------------------------------------------------------------
-// FILE OPERATIONS
-// -----------------------------------------------------------------------------
 
 @external(erlang, "ewe_ffi", "open_file")
 pub fn open(path: String) -> Result(File, FileError)

@@ -1,6 +1,3 @@
-// -----------------------------------------------------------------------------
-// IMPORTS
-// -----------------------------------------------------------------------------
 import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/int
@@ -10,20 +7,14 @@ import gleam/string
 import gleam/string_tree
 import logging
 
-// -----------------------------------------------------------------------------
-// INTERNAL TYPES
-// -----------------------------------------------------------------------------
-
-/// Message that can be sent to the clock actor
+/// Message that can be sent to the clock actor.
+/// 
 type Message {
   Tick
 }
 
-// -----------------------------------------------------------------------------
-// PUBLIC API
-// -----------------------------------------------------------------------------
-
-/// starts the clock application
+/// Starts the clock application.
+/// 
 pub fn start(_type, _args) -> Result(process.Pid, actor.StartError) {
   actor.new_with_initialiser(1000, fn(subject) {
     init_clock_storage()
@@ -48,13 +39,15 @@ pub fn start(_type, _args) -> Result(process.Pid, actor.StartError) {
   })
 }
 
-/// stops the clock application
+/// Stops the clock application.
+/// 
 pub fn stop(_state) {
   atom.create("ok")
 }
 
-/// looks up the HTTP date from the clock storage or calculates a new one if 
-/// it's not found
+/// Looks up the HTTP date from the clock storage or calculates a new one if 
+/// it's not found.
+/// 
 pub fn get_http_date() -> String {
   case lookup_http_date() {
     Ok(date) -> date
@@ -68,11 +61,8 @@ pub fn get_http_date() -> String {
   }
 }
 
-// -----------------------------------------------------------------------------
-// INTERNAL FUNCTIONS
-// -----------------------------------------------------------------------------
-
-/// Calculates the HTTP date based on the current time
+/// Calculates the HTTP date based on the current time.
+/// 
 fn calculate_http_date() -> String {
   let #(weekday, #(year, month, day), #(hour, minute, second)) = now()
   string_tree.new()
@@ -93,7 +83,8 @@ fn calculate_http_date() -> String {
   |> string_tree.to_string()
 }
 
-/// Converts a weekday number to a string
+/// Converts a weekday number to a string.
+/// 
 fn weekday_to_string(weekday: Int) -> String {
   case weekday {
     1 -> "Mon"
@@ -108,7 +99,8 @@ fn weekday_to_string(weekday: Int) -> String {
   }
 }
 
-/// Converts a month number to a string
+/// Converts a month number to a string.
+/// 
 fn month_to_string(month: Int) -> String {
   case month {
     1 -> "Jan"
@@ -127,10 +119,6 @@ fn month_to_string(month: Int) -> String {
       panic as "erlang is breaking the fourth wall: erlang month outside of 1-12 range"
   }
 }
-
-// -----------------------------------------------------------------------------
-// EXTERNAL FUNCTIONS
-// -----------------------------------------------------------------------------
 
 @external(erlang, "ewe_ffi", "now")
 fn now() -> #(Int, #(Int, Int, Int), #(Int, Int, Int))

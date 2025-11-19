@@ -1,6 +1,4 @@
-// -----------------------------------------------------------------------------
-// IMPORTS
-// -----------------------------------------------------------------------------
+import exception
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/dynamic/decode
@@ -10,21 +8,14 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import gleam/string
-import logging
-
-import websocks
-
 import glisten/socket.{type Socket, type SocketReason}
 import glisten/socket/options.{ActiveMode, Count}
 import glisten/transport.{type Transport}
+import logging
+import websocks
 
-import ewe/internal/exception
-
-// -----------------------------------------------------------------------------
-// PUBLIC TYPES
-// -----------------------------------------------------------------------------
-
-// Represents a WebSocket connection
+/// Represents a WebSocket connection.
+/// 
 pub type WebsocketConnection {
   WebsocketConnection(
     transport: Transport,
@@ -33,33 +24,34 @@ pub type WebsocketConnection {
   )
 }
 
-// Messages that can be sent to or received from the WebSocket
+/// Messages that can be sent to or received from the WebSocket.
+/// 
 pub type WebsocketMessage(user_message) {
   Frame(websocks.Frame)
   UserMessage(user_message)
 }
 
-// Control flow for WebSocket message handling
+/// Control flow for WebSocket message handling.
+/// 
 pub type WebsocketNext(user_state, user_message) {
   Continue(user_state: user_state, selector: Option(Selector(user_message)))
   NormalStop
   AbnormalStop(reason: String)
 }
 
-// -----------------------------------------------------------------------------
-// INTERNAL TYPES
-// -----------------------------------------------------------------------------
-
-// Internal state maintained by the WebSocket actor
+/// Internal state maintained by the WebSocket actor.
+/// 
 type WebsocketState(user_state) {
   WebsocketState(user_state: user_state, context: websocks.Context)
 }
 
-// Type alias for actor next steps
+/// Type alias for actor next steps.
+/// 
 type ActorNext(user_state, user_message) =
   actor.Next(WebsocketState(user_state), InternalMessage(user_message))
 
-// Internal messages used by the WebSocket actor
+/// Internal messages used by the WebSocket actor.
+/// 
 type InternalMessage(user_message) {
   Packet(BitArray)
   Close
@@ -68,104 +60,45 @@ type InternalMessage(user_message) {
   Invalid
 }
 
-// -----------------------------------------------------------------------------
-// CALLBACK TYPE ALIASES
-// -----------------------------------------------------------------------------
-
-// Function called when the WebSocket connection is initialized
+/// Function called when the WebSocket connection is initialized.
+/// 
 type OnInit(user_state, user_message) =
   fn(WebsocketConnection, Selector(user_message)) ->
     #(user_state, Selector(user_message))
 
-// Function called to handle incoming WebSocket messages
+/// Function called to handle incoming WebSocket messages.
+/// 
 type Handler(user_state, user_message) =
   fn(WebsocketConnection, user_state, WebsocketMessage(user_message)) ->
     WebsocketNext(user_state, user_message)
 
-// Function called when the WebSocket connection is closed
+/// Function called when the WebSocket connection is closed.
+/// 
 type OnClose(user_state) =
   fn(WebsocketConnection, user_state) -> Nil
 
-// -----------------------------------------------------------------------------
-// CONSTANTS
-// -----------------------------------------------------------------------------
-
+/// Error message for malformed messages.
+/// 
 const malformed = "Received malformed message"
 
+/// Error message for crashed WebSocket handler.
+/// 
 const crashed = "Crash in websocket handler"
 
+/// Error message for failed PONG frame.
+/// 
 const failed_pong = "Failed to send PONG frame"
 
+/// Error message for sending WebSocket message from non-owning process.
+/// 
 const non_owning_process = "Sending WebSocket message from non-owning process"
 
-// -----------------------------------------------------------------------------
-// COMPRESSION UTILITIES
-// -----------------------------------------------------------------------------
-
-// /// Gets the deflate context from the compression option
-// fn get_deflate(
-//   compression: Option(compression.Compression),
-// ) -> Option(compression.Context) {
-//   option.map(compression, fn(compression) { compression.deflate })
-// }
-
-// /// Gets the inflate context from the compression option
-// fn get_inflate(
-//   compression: Option(compression.Compression),
-// ) -> Option(compression.Context) {
-//   option.map(compression, fn(compression) { compression.inflate })
-// }
-
-// -----------------------------------------------------------------------------
-// SELECTOR UTILITIES
-// -----------------------------------------------------------------------------
-
-/// Creates a selector for valid TCP/SSL records
-fn select_valid_record(
-  selector: Selector(InternalMessage(user_message)),
-  binary_atom: String,
-) -> Selector(InternalMessage(user_message)) {
-  process.select_record(selector, atom.create(binary_atom), 2, fn(record) {
-    decode.run(record, {
-      use data <- decode.field(2, decode.bit_array)
-      decode.success(Packet(data))
-    })
-    |> result.unwrap(Invalid)
-  })
-}
-
-/// Creates selector for glisten socket events
-fn create_socket_selector() -> Selector(InternalMessage(user_message)) {
-  process.new_selector()
-  // https://github.com/rawhat/glisten/blob/master/src/glisten/internal/handler.gleam#L121
-  |> select_valid_record("tcp")
-  // https://github.com/rawhat/glisten/blob/master/src/glisten/internal/handler.gleam#L129
-  |> select_valid_record("ssl")
-  // https://github.com/rawhat/glisten/blob/master/src/glisten/internal/handler.gleam#L140
-  |> process.select_record(atom.create("tcp_closed"), 1, fn(_) { Close })
-  // https://github.com/rawhat/glisten/blob/master/src/glisten/internal/handler.gleam#L137
-  |> process.select_record(atom.create("ssl_closed"), 1, fn(_) { Close })
-  |> process.select_record(atom.create("tcp_passive"), 1, fn(_) { TcpPassive })
-}
-
-/// Maps user selector to internal message
-fn user_selector(
-  selector: Option(Selector(user_message)),
-) -> Option(Selector(InternalMessage(user_message))) {
-  option.map(selector, fn(selector) { process.map_selector(selector, User) })
-}
-
-// -----------------------------------------------------------------------------
-// SOCKET UTILITIES
-// -----------------------------------------------------------------------------
-
+/// Active count for socket.
+/// 
 const socket_active_count = 100
 
-// -----------------------------------------------------------------------------
-// PUBLIC API
-// -----------------------------------------------------------------------------
-
-/// Starts a new WebSocket connection
+/// Starts a new WebSocket connection.
+/// 
 pub fn start(
   transport: Transport,
   socket: Socket,
@@ -231,67 +164,34 @@ pub fn start(
   |> result.map(after_start(_, transport, socket))
 }
 
-/// Sends a frame to the WebSocket
-pub fn send_frame(
-  encoder: fn(BitArray, websocks.Context, Option(BitArray)) -> BitArray,
-  transport: Transport,
-  socket: Socket,
-  context: websocks.Context,
-  payload: BitArray,
-) -> Result(Nil, SocketReason) {
-  let frame =
-    exception.rescue(fn() {
-      encoder(payload, context, option.None)
-      |> bytes_tree.from_bit_array()
-      |> transport.send(transport, socket, _)
+/// Creates a selector for valid TCP/SSL records.
+/// 
+fn select_valid_record(
+  selector: Selector(InternalMessage(user_message)),
+  binary_atom: String,
+) -> Selector(InternalMessage(user_message)) {
+  process.select_record(selector, atom.create(binary_atom), 2, fn(record) {
+    decode.run(record, {
+      use data <- decode.field(2, decode.bit_array)
+      decode.success(Packet(data))
     })
-
-  case frame {
-    Ok(frame) -> frame
-    Error(reason) -> {
-      logging.log(
-        logging.Error,
-        "Frame should be sent from the WebSocket connection, but was sent from different process: "
-          <> string.inspect(reason),
-      )
-      panic as non_owning_process
-    }
-  }
+    |> result.unwrap(Invalid)
+  })
 }
 
-pub fn send_close_frame(
-  transport: Transport,
-  socket: Socket,
-  code: websocks.CloseReason,
-) -> WebsocketNext(user_state, user_message) {
-  let frame =
-    exception.rescue(fn() {
-      websocks.encode_close_frame(code, None)
-      |> bytes_tree.from_bit_array()
-      |> transport.send(transport, socket, _)
-    })
-
-  case frame {
-    Ok(Ok(Nil)) -> NormalStop
-    Ok(Error(reason)) ->
-      AbnormalStop("Failed to send close frame: " <> string.inspect(reason))
-    Error(reason) -> {
-      logging.log(
-        logging.Error,
-        "Frame should be sent from the WebSocket connection, but was sent from different process: "
-          <> string.inspect(reason),
-      )
-
-      panic as non_owning_process
-    }
-  }
+/// Creates selector for glisten socket events.
+/// 
+fn create_socket_selector() -> Selector(InternalMessage(user_message)) {
+  process.new_selector()
+  |> select_valid_record("tcp")
+  |> select_valid_record("ssl")
+  |> process.select_record(atom.create("tcp_closed"), 1, fn(_) { Close })
+  |> process.select_record(atom.create("ssl_closed"), 1, fn(_) { Close })
+  |> process.select_record(atom.create("tcp_passive"), 1, fn(_) { TcpPassive })
 }
 
-// -----------------------------------------------------------------------------
-// MESSAGE HANDLING
-// -----------------------------------------------------------------------------
-
-/// Handles incoming packet data, decoding frames and processing them
+/// Handles incoming packet data, decoding frames and processing them.
+/// 
 fn handle_valid_packet(
   transport: Transport,
   socket: Socket,
@@ -337,6 +237,8 @@ fn handle_valid_packet(
   }
 }
 
+/// Represents the state of the WebSocket connection when resolving frames.
+/// 
 type ResolveState(user_state, user_message) {
   ResolveState(
     socket: Socket,
@@ -346,7 +248,8 @@ type ResolveState(user_state, user_message) {
   )
 }
 
-/// Processes a list of frames sequentially
+/// Processes a list of frames sequentially.
+/// 
 fn handle_frame(
   state: ResolveState(user_state, user_message),
   context: websocks.Context,
@@ -424,7 +327,8 @@ fn handle_frame(
   }
 }
 
-/// Handles user messages sent to the WebSocket
+/// Handles user messages sent to the WebSocket.
+/// 
 fn handle_user_message(
   transport: Transport,
   socket: Socket,
@@ -460,11 +364,16 @@ fn handle_user_message(
   }
 }
 
-// -----------------------------------------------------------------------------
-// CONNECTION MANAGEMENT
-// -----------------------------------------------------------------------------
+/// Maps user selector to internal message.
+/// 
+fn user_selector(
+  selector: Option(Selector(user_message)),
+) -> Option(Selector(InternalMessage(user_message))) {
+  option.map(selector, fn(selector) { process.map_selector(selector, User) })
+}
 
-/// Handles WebSocket connection closure
+/// Handles WebSocket connection closure.
+/// 
 fn handle_close(
   on_close: OnClose(user_state),
   state: WebsocketState(user_state),
@@ -486,7 +395,8 @@ fn handle_close(
   }
 }
 
-/// Maps actor's starting value to Nil
+/// Maps actor's starting value to Nil.
+/// 
 fn after_start(
   started: actor.Started(Subject(InternalMessage(user_message))),
   transport: Transport,
@@ -498,4 +408,63 @@ fn after_start(
     ])
 
   actor.Started(..started, data: Nil)
+}
+
+/// Sends a frame to the WebSocket.
+/// 
+pub fn send_frame(
+  encoder: fn(BitArray, websocks.Context, Option(BitArray)) -> BitArray,
+  transport: Transport,
+  socket: Socket,
+  context: websocks.Context,
+  payload: BitArray,
+) -> Result(Nil, SocketReason) {
+  let frame =
+    exception.rescue(fn() {
+      encoder(payload, context, option.None)
+      |> bytes_tree.from_bit_array()
+      |> transport.send(transport, socket, _)
+    })
+
+  case frame {
+    Ok(frame) -> frame
+    Error(reason) -> {
+      logging.log(
+        logging.Error,
+        "Frame should be sent from the WebSocket connection, but was sent from different process: "
+          <> string.inspect(reason),
+      )
+      panic as non_owning_process
+    }
+  }
+}
+
+/// Sends a close frame to the WebSocket.
+/// 
+pub fn send_close_frame(
+  transport: Transport,
+  socket: Socket,
+  code: websocks.CloseReason,
+) -> WebsocketNext(user_state, user_message) {
+  let frame =
+    exception.rescue(fn() {
+      websocks.encode_close_frame(code, None)
+      |> bytes_tree.from_bit_array()
+      |> transport.send(transport, socket, _)
+    })
+
+  case frame {
+    Ok(Ok(Nil)) -> NormalStop
+    Ok(Error(reason)) ->
+      AbnormalStop("Failed to send close frame: " <> string.inspect(reason))
+    Error(reason) -> {
+      logging.log(
+        logging.Error,
+        "Frame should be sent from the WebSocket connection, but was sent from different process: "
+          <> string.inspect(reason),
+      )
+
+      panic as non_owning_process
+    }
+  }
 }

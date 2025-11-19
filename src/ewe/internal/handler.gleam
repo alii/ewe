@@ -1,48 +1,23 @@
-// -----------------------------------------------------------------------------
-// IMPORTS
-// -----------------------------------------------------------------------------
+import ewe/internal/http1.{type Connection, type ResponseBody} as ewe_http
+import ewe/internal/http1/handler as http1_handler
 import gleam/erlang/process
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import gleam/option.{type Option, Some}
 import gleam/otp/actor
 import gleam/otp/factory_supervisor as factory
+import glisten
 import logging
 
-import glisten
-
-import ewe/internal/http1.{type Connection, type ResponseBody} as ewe_http
-
-import ewe/internal/http1/handler as http1_handler
-
-// -----------------------------------------------------------------------------
-// PUBLIC TYPES
-// -----------------------------------------------------------------------------
-
-// Custom message that can be sent to or received from the Glisten actor
-pub type Message {
-  IdleTimeout
+/// State of the request handler.
+/// 
+pub type Handler {
+  Http1(state: http1_handler.Http1Handler, self: process.Subject(Nil))
 }
 
-// State of the Glisten actor
-pub type GlistenState {
-  GlistenState(timer: Option(process.Timer), subject: process.Subject(Message))
-}
-
-pub type State {
-  Http1(state: http1_handler.State, self: process.Subject(Message))
-}
-
-// -----------------------------------------------------------------------------
-// INTERNAL TYPES
-// -----------------------------------------------------------------------------
-
-// -----------------------------------------------------------------------------
-// PUBLIC API
-// -----------------------------------------------------------------------------
-
-/// Initializes the Glisten actor's state and selector for custom messages
-pub fn init(_) -> #(State, Option(process.Selector(Message))) {
+/// Initializes the request handler state.
+/// 
+pub fn init(_) -> #(Handler, Option(process.Selector(Nil))) {
   let subject = process.new_subject()
   let selector =
     process.new_selector()
@@ -51,7 +26,8 @@ pub fn init(_) -> #(State, Option(process.Selector(Message))) {
   #(Http1(http1_handler.init(), self: subject), Some(selector))
 }
 
-/// Main handler loop that processes HTTP requests
+/// Main loop that processes incoming messages.
+/// 
 pub fn loop(
   handler: fn(Request(Connection)) -> Response(ResponseBody),
   on_crash: Response(ResponseBody),
@@ -59,22 +35,22 @@ pub fn loop(
     factory.Message(fn() -> Result(actor.Started(Nil), actor.StartError), Nil),
   ),
   idle_timeout: Int,
-) -> glisten.Loop(State, Message) {
+) -> glisten.Loop(Handler, Nil) {
   fn(
-    state: State,
-    msg: glisten.Message(Message),
-    conn: glisten.Connection(Message),
-  ) -> glisten.Next(State, glisten.Message(Message)) {
+    state: Handler,
+    message: glisten.Message(Nil),
+    conn: glisten.Connection(Nil),
+  ) -> glisten.Next(Handler, glisten.Message(Nil)) {
     let sender = conn.subject
     let conn = ewe_http.transform_connection(conn, factory_name)
 
-    case state, msg {
-      Http1(state, self), glisten.Packet(msg) -> {
+    case state, message {
+      Http1(state, self), glisten.Packet(message) -> {
         let result =
           http1_handler.handle_packet(
             state,
-            msg,
             conn,
+            message,
             sender,
             handler,
             on_crash,
@@ -82,9 +58,11 @@ pub fn loop(
           )
 
         case result {
-          http1_handler.Continue(new_state) ->
-            glisten.continue(Http1(new_state, self))
-          http1_handler.Http2CleartextUpgrade(_req, _settings) -> {
+          http1_handler.Continue(state) -> glisten.continue(Http1(state, self))
+          http1_handler.Http2Upgrade(http1_handler.OverCleartext(
+            _req,
+            _settings,
+          )) -> {
             logging.log(
               logging.Debug,
               "Received HTTP/2 cleartext upgrade request",

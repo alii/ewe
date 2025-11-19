@@ -1,31 +1,28 @@
-// -----------------------------------------------------------------------------
-// IMPORTS
-// -----------------------------------------------------------------------------
 import ewe/internal/buffer
 import gleam/dynamic
 import gleam/http
 import gleam/option
 
-// -----------------------------------------------------------------------------
-// TYPES
-// -----------------------------------------------------------------------------
-
-// Type of HTTP packet being decoded
+/// Type of HTTP packet being decoded.
+/// 
 pub type PacketType {
   HttpBin
   HttphBin
 }
 
-// Absolute path in HTTP request
+/// Absolute path in HTTP request.
+/// 
 pub type AbsPath {
   AbsPath(BitArray)
 }
 
-// HTTP version as major and minor numbers
+/// HTTP version as major and minor numbers.
+/// 
 pub type Version =
   #(Int, Int)
 
-// HTTP packet structure
+/// HTTP packet structure.
+/// 
 pub type HttpPacket {
   HttpRequest(method: BitArray, path: AbsPath, version: Version)
   HttpHeader(idx: Int, field: BitArray, value: BitArray)
@@ -33,17 +30,15 @@ pub type HttpPacket {
   Http2Upgrade
 }
 
-// Complete packet with data and remaining bytes
+/// Complete packet with data and remaining bytes.
+/// 
 pub type Packet {
   Packet(HttpPacket, rest: BitArray)
   More(length: option.Option(Int))
 }
 
-// -----------------------------------------------------------------------------
-// DECODING
-// -----------------------------------------------------------------------------
-
-/// Decodes HTTP packets using external FFI implementation
+/// Decodes HTTP packets using external FFI implementation.
+/// 
 pub fn decode_packet(
   type_ type_: PacketType,
   buffer buffer: buffer.Buffer,
@@ -51,7 +46,6 @@ pub fn decode_packet(
   decode_packet_ffi(type_, buffer.data, [])
 }
 
-/// Decodes HTTP packets using external FFI implementation
 @external(erlang, "ewe_ffi", "decode_packet")
 fn decode_packet_ffi(
   type_ type_: PacketType,
@@ -59,7 +53,8 @@ fn decode_packet_ffi(
   options options: List(a),
 ) -> Result(Packet, dynamic.Dynamic)
 
-/// Decodes HTTP method from binary data
+/// Decodes HTTP method from binary data.
+/// 
 pub fn decode_method(method: BitArray) -> Result(http.Method, Nil) {
   case method {
     <<"GET">> -> Ok(http.Get)
@@ -75,11 +70,8 @@ pub fn decode_method(method: BitArray) -> Result(http.Method, Nil) {
   }
 }
 
-// -----------------------------------------------------------------------------
-// MAPPING
-// -----------------------------------------------------------------------------
-
-/// Maps header field indices to their string names
+/// Maps header field indices to their string names.
+/// 
 pub fn formatted_field_by_idx(idx: Int) -> Result(String, Nil) {
   case idx {
     0 -> Error(Nil)

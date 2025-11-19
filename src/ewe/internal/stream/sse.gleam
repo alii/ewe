@@ -1,6 +1,4 @@
-// -----------------------------------------------------------------------------
-// IMPORTS
-// -----------------------------------------------------------------------------
+import ewe/internal/encoder
 import gleam/bytes_tree
 import gleam/erlang/atom
 import gleam/erlang/process.{type Selector, type Subject}
@@ -11,62 +9,46 @@ import gleam/option.{type Option}
 import gleam/otp/actor
 import gleam/result
 import gleam/string_tree
-import glisten/socket/options.{Active, ActiveMode}
-
 import glisten/socket.{type Socket}
+import glisten/socket/options.{Active, ActiveMode}
 import glisten/transport.{type Transport}
 
-import ewe/internal/encoder
+/// Sends a response for a Server-Sent Events connection.
+/// 
+pub fn send_response(transport: Transport, socket: Socket) -> Result(Nil, Nil) {
+  response.new(200)
+  |> response.set_header("content-type", "text/event-stream")
+  |> response.set_header("cache-control", "no-cache")
+  |> response.set_header("connection", "keep-alive")
+  |> encoder.encode_response_partially()
+  |> transport.send(transport, socket, _)
+  |> result.replace_error(Nil)
+}
 
-// -----------------------------------------------------------------------------
-// PUBLIC TYPES
-// -----------------------------------------------------------------------------
-
-// Represents a Server-Sent Events connection
+/// Represents a Server-Sent Events connection.
+/// 
 pub type SSEConnection {
   SSEConnection(transport: Transport, socket: Socket)
 }
 
-// Represents a Server-Sent Events event
-pub type SSEEvent {
-  SSEEvent(
-    event: Option(String),
-    data: String,
-    id: Option(String),
-    retry: Option(Int),
-  )
-}
-
-// Represents an instruction on how Server-Sent Events connection should proceed
+/// Represents an instruction on how Server-Sent Events connection should proceed.
+/// 
 pub type SSENext(user_state) {
   Continue(user_state)
   NormalStop
   AbnormalStop(reason: String)
 }
 
-// Represents a message that can be sent to or received from the Server-Sent 
-// Events connection
+/// Represents a message that can be sent to or received from the Server-Sent 
+/// Events connection.
+/// 
 pub type SSEMessages(user_message) {
   User(user_message)
   Close
 }
 
-// -----------------------------------------------------------------------------
-// PUBLIC API
-// -----------------------------------------------------------------------------
-
-/// Sends a response for a Server-Sent Events connection
-pub fn send_response(transport: Transport, socket: Socket) -> Result(Nil, Nil) {
-  response.new(200)
-  |> response.set_header("content-type", "text/event-stream")
-  |> response.set_header("cache-control", "no-cache")
-  |> response.set_header("connection", "keep-alive")
-  |> encoder.setup_encoded_response()
-  |> transport.send(transport, socket, _)
-  |> result.replace_error(Nil)
-}
-
-/// Starts a new Server-Sent Events connection
+/// Starts a new Server-Sent Events connection.
+/// 
 pub fn start(
   transport: Transport,
   socket: Socket,
@@ -110,7 +92,45 @@ pub fn start(
   |> result.map(after_start(_, transport, socket))
 }
 
-/// Sends an event to the client
+/// Creates a selector for the Server-Sent Events connection.
+/// 
+fn create_socket_selector(
+  user_subject: Subject(user_message),
+) -> Selector(SSEMessages(user_message)) {
+  process.new_selector()
+  |> process.select_map(user_subject, fn(msg) { User(msg) })
+  |> process.select_record(atom.create("tcp_closed"), 1, fn(_) { Close })
+  |> process.select_record(atom.create("ssl_closed"), 1, fn(_) { Close })
+}
+
+/// Maps actor's starting value to Nil.
+/// 
+fn after_start(
+  started: actor.Started(Subject(user_message)),
+  transport: Transport,
+  socket: Socket,
+) -> actor.Started(Nil) {
+  let assert Ok(pid) = process.subject_owner(started.data)
+  let _ = transport.controlling_process(transport, socket, pid)
+
+  let _ = transport.set_opts(transport, socket, [ActiveMode(Active)])
+
+  actor.Started(..started, data: Nil)
+}
+
+/// Represents a Server-Sent Events event.
+/// 
+pub type SSEEvent {
+  SSEEvent(
+    event: Option(String),
+    data: String,
+    id: Option(String),
+    retry: Option(Int),
+  )
+}
+
+/// Sends an event to the client.
+/// 
 pub fn send_event(
   transport: Transport,
   socket: Socket,
@@ -145,35 +165,8 @@ pub fn send_event(
   |> transport.send(transport, socket, _)
 }
 
-// -----------------------------------------------------------------------------
-// INTERNAL FUNCTIONS
-// -----------------------------------------------------------------------------
-
-/// Creates a selector for the Server-Sent Events connection
-fn create_socket_selector(
-  user_subject: Subject(user_message),
-) -> Selector(SSEMessages(user_message)) {
-  process.new_selector()
-  |> process.select_map(user_subject, fn(msg) { User(msg) })
-  |> process.select_record(atom.create("tcp_closed"), 1, fn(_) { Close })
-  |> process.select_record(atom.create("ssl_closed"), 1, fn(_) { Close })
-}
-
-/// Formats a field and value for a Server-Sent Events event
+/// Formats a field and value for a Server-Sent Events event.
+/// 
 fn format(field: String, value: String) {
   field <> ": " <> value <> "\n"
-}
-
-/// Maps actor's starting value to Nil
-fn after_start(
-  started: actor.Started(Subject(user_message)),
-  transport: Transport,
-  socket: Socket,
-) -> actor.Started(Nil) {
-  let assert Ok(pid) = process.subject_owner(started.data)
-  let _ = transport.controlling_process(transport, socket, pid)
-
-  let _ = transport.set_opts(transport, socket, [ActiveMode(Active)])
-
-  actor.Started(..started, data: Nil)
 }

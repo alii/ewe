@@ -1,6 +1,10 @@
-// -----------------------------------------------------------------------------
-// IMPORTS
-// -----------------------------------------------------------------------------
+import ewe/internal/buffer.{type Buffer}
+import ewe/internal/clock
+import ewe/internal/decoder.{
+  AbsPath, HttpBin, HttpEoh, HttpHeader, HttpRequest, HttphBin, More, Packet,
+}
+import ewe/internal/encoder
+import ewe/internal/file
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree.{type BytesTree}
@@ -20,64 +24,16 @@ import gleam/set.{type Set}
 import gleam/string
 import gleam/string_tree.{type StringTree}
 import gleam/uri
-
-import websocks
-
 import glisten
 import glisten/socket.{type Socket}
 import glisten/transport.{type Transport}
+import websocks
 
-import ewe/internal/buffer.{type Buffer}
-import ewe/internal/clock
-import ewe/internal/decoder.{
-  AbsPath, HttpBin, HttpEoh, HttpHeader, HttpRequest, HttphBin, More, Packet,
-}
-import ewe/internal/encoder
-import ewe/internal/file
-
-// -----------------------------------------------------------------------------
-// PUBLIC TYPES
+// Connection
 // -----------------------------------------------------------------------------
 
-// HTTP response body types
-pub type ResponseBody {
-  TextData(String)
-  BytesData(BytesTree)
-  BitsData(BitArray)
-  StringTreeData(StringTree)
-
-  File(descriptor: file.IoDevice, offset: Int, size: Int)
-
-  Chunked
-  Websocket
-  SSE
-
-  Empty
-}
-
-// HTTP parsing error types
-pub type ParseError {
-  // request line
-  InvalidMethod
-  InvalidTarget
-  InvalidVersion
-
-  // headers
-  InvalidHeaders
-  MissingHost
-  DuplicateHost
-  InvalidContentLength
-
-  // body
-  InvalidBody
-  BodyTooLarge
-
-  // anomalies
-  MalformedRequest
-  PacketDiscard
-}
-
-// HTTP connection
+/// Connection to a client.
+/// 
 pub type Connection {
   Connection(
     transport: Transport,
@@ -89,73 +45,11 @@ pub type Connection {
   )
 }
 
-// HTTP version enumeration
-pub type HttpVersion {
-  Http10
-  Http11
-}
-
-// WebSocket upgrade error types
-pub type UpgradeWebsocketError {
-  MethodNotGet
-  MissingConnectionHeader
-  InvalidConnectionHeader
-  MissingUpgradeHeader
-  InvalidUpgradeHeader
-  MissingWebsocketVersion
-  MissingWebsocketKey
-}
-
-// Possible results of consuming some amount of data from the request body
-pub type Stream {
-  Consumed(data: BitArray, next: fn(Int) -> Result(Stream, ParseError))
-  Done
-}
-
-// Result of parsing a request
-pub type ParsedRequest {
-  Http1Request(req: Request(Connection), version: HttpVersion)
-  Http2Upgrade(data: BitArray)
-  Http2CleartextUpgrade(req: Request(Connection), settings: String)
-}
-
-// -----------------------------------------------------------------------------
-// INTERNAL TYPES
-// -----------------------------------------------------------------------------
-
-// Function that reads `N` amount of bytes from the request body
-type Consumer =
-  fn(Int) -> Result(Stream, ParseError)
-
-// Chunked body parsing result
-type BodyChunk {
-  Incomplete
-  Chunk(BitArray, size: Int, rest: Buffer)
-  FinalChunk(rest: Buffer)
-}
-
-// State of the chunked body parsing
-type ChunkedStreamState {
-  ChunkedStreamState(data: Buffer, chunk: Buffer, done: Bool)
-}
-
-// -----------------------------------------------------------------------------
-// CONSTANTS
-// -----------------------------------------------------------------------------
-
-// 2MB = 2M bytes
-const max_reading_size = 2_000_000
-
-// -----------------------------------------------------------------------------
-// PUBLIC API
-// -----------------------------------------------------------------------------
-
-/// Transforms a glisten connection to `Connection` type
+/// Transforms a glisten connection.
+/// 
 pub fn transform_connection(
   conn: glisten.Connection(a),
-  factory_name: process.Name(
-    factory.Message(fn() -> Result(actor.Started(Nil), actor.StartError), Nil),
-  ),
+  factory_name: process.Name(_),
 ) -> Connection {
   Connection(
     transport: conn.transport,
@@ -165,7 +59,75 @@ pub fn transform_connection(
   )
 }
 
-/// Parses an HTTP request from the given buffer
+/// Reads data from the socket with timeout and size limits.
+/// 
+fn read_from_socket(
+  transport transport: Transport,
+  socket socket: Socket,
+  buffer buffer: Buffer,
+  on_error on_error: ParseError,
+) -> Result(Buffer, ParseError) {
+  let read_size = int.min(buffer.remaining, max_reading_size)
+
+  use data <- try(
+    transport.receive_timeout(transport, socket, read_size, 5000)
+    |> replace_error(on_error),
+  )
+
+  let new_buffer = buffer.append_size(buffer, data, read_size)
+
+  case new_buffer.remaining {
+    0 -> Ok(new_buffer)
+    _ -> read_from_socket(transport:, socket:, buffer: new_buffer, on_error:)
+  }
+}
+
+// HTTP/1.1
+// -----------------------------------------------------------------------------
+
+/// Errors that can occur when parsing a request.
+/// 
+pub type ParseError {
+  // request line
+  InvalidMethod
+  InvalidTarget
+  InvalidVersion
+  // headers
+  InvalidHeaders
+  MissingHost
+  DuplicateHost
+  InvalidContentLength
+  // body
+  InvalidBody
+  BodyTooLarge
+  // anomalies
+  MalformedRequest
+  PacketDiscard
+}
+
+/// HTTP version enumeration.
+/// 
+pub type HttpVersion {
+  Http10
+  Http11
+}
+
+/// Result of parsing a request.
+/// 
+pub type ParsedRequest {
+  Http1Request(req: Request(Connection), version: HttpVersion)
+  Http2Upgrade(upgrade: Http2Upgrade)
+}
+
+/// HTTP/2 upgrade options.
+/// 
+pub type Http2Upgrade {
+  OverCleartext(req: Request(Connection), settings: String)
+  OverTLS(data: BitArray)
+}
+
+/// Parses an HTTP request from the given buffer.
+/// 
 pub fn parse_request(
   conn: Connection,
   buffer: Buffer,
@@ -186,6 +148,7 @@ pub fn parse_request(
         |> try(uri.parse)
         |> replace_error(InvalidTarget),
       )
+
       // Headers
       use #(headers, rest) <- try(parse_headers(
         transport,
@@ -244,7 +207,7 @@ pub fn parse_request(
                 string.contains(string.lowercase(connection), "upgrade")
 
               case is_upgrade {
-                True -> Ok(Http2CleartextUpgrade(req:, settings:))
+                True -> Ok(Http2Upgrade(OverCleartext(req:, settings:)))
                 False -> Ok(Http1Request(req:, version: Http11))
               }
             }
@@ -255,7 +218,7 @@ pub fn parse_request(
       }
     }
     Ok(Packet(decoder.Http2Upgrade, <<"\r\nSM\r\n\r\n":utf8, data:bits>>)) ->
-      Ok(Http2Upgrade(data))
+      Ok(Http2Upgrade(OverTLS(data:)))
     Ok(More(size)) -> {
       use new_buffer <- try(read_from_socket(
         transport,
@@ -270,7 +233,118 @@ pub fn parse_request(
   }
 }
 
-/// Reads the HTTP request body
+/// Parses HTTP headers from the buffer.
+/// 
+fn parse_headers(
+  transport transport: Transport,
+  socket socket: Socket,
+  buffer buffer: Buffer,
+  headers headers: Dict(String, String),
+) {
+  case decoder.decode_packet(HttphBin, buffer) {
+    Ok(Packet(HttpEoh, rest)) -> Ok(#(headers, rest))
+    Ok(Packet(HttpHeader(idx, field, value), rest)) -> {
+      use field <- try(case decoder.formatted_field_by_idx(idx) {
+        Ok(field) -> Ok(field)
+        Error(Nil) -> {
+          bit_array.to_string(field)
+          |> result.map(string.lowercase)
+          |> replace_error(InvalidHeaders)
+        }
+      })
+
+      use value <- try(
+        validate_field_value(value) |> replace_error(InvalidHeaders),
+      )
+
+      let new_buffer = buffer.new(rest)
+
+      use _ <- try(case field {
+        "host" -> {
+          case dict.has_key(headers, field) {
+            True -> Error(DuplicateHost)
+            False -> Ok(Nil)
+          }
+        }
+        "content-length" -> {
+          int.parse(value)
+          |> result.try(fn(value) {
+            case value < 0 {
+              True -> Error(Nil)
+              False -> Ok(Nil)
+            }
+          })
+          |> result.replace_error(InvalidContentLength)
+        }
+        _ -> Ok(Nil)
+      })
+
+      insert_header(headers, field, value)
+      |> parse_headers(transport:, socket:, buffer: new_buffer, headers: _)
+    }
+    Ok(More(size)) -> {
+      let read_size = option.unwrap(size, 0)
+
+      let sized_buffer = buffer.sized(buffer, read_size)
+
+      use new_buffer <- try(read_from_socket(
+        transport:,
+        socket:,
+        buffer: sized_buffer,
+        on_error: InvalidHeaders,
+      ))
+
+      parse_headers(transport:, socket:, buffer: new_buffer, headers:)
+    }
+    _ -> Error(InvalidHeaders)
+  }
+}
+
+@external(erlang, "ewe_ffi", "validate_field_value")
+fn validate_field_value(value: BitArray) -> Result(String, Nil)
+
+/// Inserts a header into the headers dictionary.
+/// 
+fn insert_header(
+  headers: Dict(String, String),
+  field: String,
+  value: String,
+) -> Dict(String, String) {
+  case field != "set-cookie" {
+    True ->
+      dict.upsert(headers, field, fn(target) {
+        case target {
+          option.Some(existing) -> existing <> ", " <> value
+          option.None -> value
+        }
+      })
+    False -> dict.insert(headers, available_cookie_key(headers, 0), value)
+  }
+}
+
+/// Finds an available key for set-cookie headers.
+/// 
+fn available_cookie_key(headers: Dict(String, String), idx: Int) -> String {
+  let key = case idx {
+    0 -> "set-cookie"
+    n -> "set-cookie-" <> int.to_string(n)
+  }
+
+  case dict.has_key(headers, key) {
+    True -> available_cookie_key(headers, idx + 1)
+    False -> key
+  }
+}
+
+// Reading Body
+// -----------------------------------------------------------------------------
+
+/// 2MB (2 million bytes).
+/// 
+const max_reading_size = 2_000_000
+
+/// Reads the request body from the socket.
+/// 
 pub fn read_body(
   req: Request(Connection),
   size_limit: Int,
@@ -338,7 +412,166 @@ pub fn read_body(
   }
 }
 
-/// Streams the HTTP request body
+/// Reads a chunked transfer-encoded body.
+/// 
+fn read_chunked_body(
+  transport transport: Transport,
+  socket socket: Socket,
+  buffer buffer: Buffer,
+  accumulated_body accumulated_body: BitArray,
+  body_size_limit body_size_limit: Int,
+  body_current_size body_current_size: Int,
+) -> Result(#(BitArray, Buffer), ParseError) {
+  use <- bool.guard(body_current_size > body_size_limit, Error(BodyTooLarge))
+
+  case parse_body_chunk(buffer) {
+    Ok(FinalChunk(rest)) -> Ok(#(accumulated_body, rest))
+    Ok(Incomplete) -> {
+      use new_buffer <- try(read_from_socket(
+        transport:,
+        socket:,
+        buffer:,
+        on_error: InvalidBody,
+      ))
+
+      read_chunked_body(
+        transport:,
+        socket:,
+        buffer: new_buffer,
+        accumulated_body:,
+        body_size_limit:,
+        body_current_size:,
+      )
+    }
+    Ok(Chunk(chunk, size, rest)) ->
+      read_chunked_body(
+        transport:,
+        socket:,
+        buffer: rest,
+        accumulated_body: <<accumulated_body:bits, chunk:bits>>,
+        body_size_limit:,
+        body_current_size: body_current_size + size,
+      )
+    Error(error) -> Error(error)
+  }
+}
+
+/// Parses a single chunk from the chunked body.
+/// 
+fn parse_body_chunk(buffer: Buffer) -> Result(BodyChunk, ParseError) {
+  case split(buffer.data, <<"\r\n">>, []) {
+    [<<"0">>, rest] -> Ok(FinalChunk(buffer.new(rest)))
+    [chunk_size, rest] -> {
+      use size <- try(
+        bit_array.to_string(chunk_size)
+        |> try(int.base_parse(_, 16))
+        |> replace_error(InvalidBody),
+      )
+
+      case split(rest, <<"\r\n">>, []) {
+        [chunk, rest] -> {
+          case bit_array.byte_size(chunk) == size {
+            True -> Ok(Chunk(chunk, size, buffer.new(rest)))
+            False -> Error(InvalidBody)
+          }
+        }
+        _ -> Ok(Incomplete)
+      }
+    }
+    _ -> Ok(Incomplete)
+  }
+}
+
+@external(erlang, "binary", "split")
+fn split(
+  subject: BitArray,
+  pattern: BitArray,
+  options: List(atom.Atom),
+) -> List(BitArray)
+
+/// Handles trailer headers in chunked responses.
+fn handle_trailers(
+  req: Request(BitArray),
+  set: Set(String),
+  rest: Buffer,
+) -> Request(BitArray) {
+  case decoder.decode_packet(HttphBin, rest) {
+    Ok(Packet(HttpEoh, _)) -> req
+    Ok(Packet(HttpHeader(idx, field, value), header_rest)) -> {
+      let field_name = case decoder.formatted_field_by_idx(idx) {
+        Ok(field_name) -> Ok(field_name)
+        Error(Nil) -> {
+          bit_array.to_string(field)
+          |> result.map(string.lowercase)
+        }
+      }
+
+      case field_name {
+        Ok(field_name) -> {
+          case
+            set.contains(set, field_name) && !is_forbidden_trailer(field_name)
+          {
+            True -> {
+              case bit_array.to_string(value) {
+                Ok(value) -> {
+                  request.set_header(req, field_name, value)
+                  |> handle_trailers(set, buffer.new(header_rest))
+                }
+                Error(Nil) -> handle_trailers(req, set, rest)
+              }
+            }
+            False -> handle_trailers(req, set, rest)
+          }
+        }
+        Error(Nil) -> handle_trailers(req, set, rest)
+      }
+    }
+    _ -> req
+  }
+}
+
+/// Checks if a header field is forbidden in trailers.
+fn is_forbidden_trailer(field: String) -> Bool {
+  case string.lowercase(field) {
+    "transfer-encoding"
+    | "content-length"
+    | "host"
+    | "cache-control"
+    | "expect"
+    | "max-forwards"
+    | "pragma"
+    | "range"
+    | "te" -> True
+    _ -> False
+  }
+}
+
+// Streaming Body
+// -----------------------------------------------------------------------------
+
+/// Possible results of consuming some amount of data from the request body.
+/// 
+pub type Stream {
+  Consumed(data: BitArray, next: fn(Int) -> Result(Stream, ParseError))
+  Done
+}
+
+/// Chunked body parsing result.
+/// 
+type BodyChunk {
+  Incomplete
+  Chunk(BitArray, size: Int, rest: Buffer)
+  FinalChunk(rest: Buffer)
+}
+
+/// State of the chunked body parsing.
+/// 
+type ChunkedStreamState {
+  ChunkedStreamState(data: Buffer, chunk: Buffer, done: Bool)
+}
+
+/// Streams the request body from the socket.
+/// 
 pub fn stream_body(req: Request(Connection)) {
   use _ <- result.try(
     handle_continue(req)
@@ -365,7 +598,166 @@ pub fn stream_body(req: Request(Connection)) {
   }
 }
 
-/// Upgrades an HTTP connection to WebSocket
+/// Creates a consumer function that reads `N` amount of bytes from the chunked 
+/// request body until it is fully consumed.
+fn do_stream_body_chunked(
+  req: Request(Connection),
+  chunked_stream_state: ChunkedStreamState,
+) -> fn(Int) -> Result(Stream, ParseError) {
+  fn(size: Int) {
+    let read_result =
+      read_from_socket_until(
+        transport: req.body.transport,
+        socket: req.body.socket,
+        state: chunked_stream_state,
+        until: size,
+      )
+
+    case read_result {
+      Ok(#(data, ChunkedStreamState(done: True, ..))) ->
+        Ok(Consumed(data, fn(_) { Ok(Done) }))
+      Ok(#(data, state)) ->
+        Ok(Consumed(data, do_stream_body_chunked(req, state)))
+      Error(_) -> Error(InvalidBody)
+    }
+  }
+}
+
+/// Reads data from the socket until `N` amount of bytes are read.
+fn read_from_socket_until(
+  transport transport: Transport,
+  socket socket: Socket,
+  state state: ChunkedStreamState,
+  until until: Int,
+) -> Result(#(BitArray, ChunkedStreamState), ParseError) {
+  let size = bit_array.byte_size(state.data.data)
+
+  case state.done, size {
+    // Data buffer contains enough data to consume `until` bytes
+    _, size if size >= until -> {
+      let #(data, rest) = buffer.split(state.data, until)
+      Ok(#(data, ChunkedStreamState(..state, data: buffer.new(rest))))
+    }
+
+    // Accomplished the reading
+    True, _ -> Ok(#(state.data.data, state))
+
+    // Data buffer does not contain enough data to consume `until` bytes
+    False, _ -> {
+      case parse_body_chunk(state.chunk) {
+        Ok(FinalChunk(_)) ->
+          read_from_socket_until(
+            transport:,
+            socket:,
+            state: ChunkedStreamState(
+              ..state,
+              chunk: buffer.empty(),
+              done: True,
+            ),
+            until:,
+          )
+        Ok(Incomplete) -> {
+          use new_buffer <- try(read_from_socket(
+            transport:,
+            socket:,
+            buffer: state.chunk,
+            on_error: InvalidBody,
+          ))
+
+          read_from_socket_until(
+            transport:,
+            socket:,
+            state: ChunkedStreamState(..state, chunk: new_buffer),
+            until:,
+          )
+        }
+        Ok(Chunk(chunk, size, rest)) -> {
+          read_from_socket_until(
+            transport:,
+            socket:,
+            state: ChunkedStreamState(
+              ..state,
+              data: buffer.append_size(state.data, chunk, size),
+              chunk: rest,
+            ),
+            until:,
+          )
+        }
+        Error(error) -> Error(error)
+      }
+    }
+  }
+}
+
+/// Creates a consumer function that reads `N` amount of bytes from the request
+/// body until it is fully consumed.
+/// 
+fn do_stream_body(
+  req: Request(Connection),
+  buffer: Buffer,
+) -> fn(Int) -> Result(Stream, ParseError) {
+  fn(size: Int) {
+    let buffer_size = bit_array.byte_size(buffer.data)
+
+    case buffer.remaining, buffer_size {
+      // Request body is fully consumed
+      0, 0 -> Ok(Done)
+
+      // Request body is supposed to be fully consumed but there is more data 
+      // in buffer
+      0, _ -> {
+        let #(data, rest) = buffer.split(buffer, size)
+        Ok(Consumed(data, do_stream_body(req, buffer.new(rest))))
+      }
+
+      // Request body is not fully consumed and there is enough data in buffer 
+      // to consume `size` bytes
+      _, buffer_size if buffer_size >= size -> {
+        let #(data, rest) = buffer.split(buffer, size)
+        let new_buffer = buffer.new_sized(rest, buffer.remaining)
+        Ok(Consumed(data, do_stream_body(req, new_buffer)))
+      }
+
+      // Request body is not fully consumed and there is not enough data in 
+      // buffer to consume `size` bytes
+      _, _ -> {
+        use read_buffer <- try(read_from_socket(
+          transport: req.body.transport,
+          socket: req.body.socket,
+          buffer: buffer.empty(),
+          on_error: InvalidBody,
+        ))
+
+        let new_buffer =
+          buffer.new_sized(
+            <<buffer.data:bits, read_buffer.data:bits>>,
+            int.max(0, buffer.remaining - bit_array.byte_size(read_buffer.data)),
+          )
+
+        let #(data, rest) = buffer.split(new_buffer, size)
+        Ok(Consumed(data, do_stream_body(req, buffer.new(rest))))
+      }
+    }
+  }
+}
+
+// Upgrades
+// -----------------------------------------------------------------------------
+
+/// Errors that can occur when upgrading a WebSocket connection.
+/// 
+pub type UpgradeWebsocketError {
+  MethodNotGet
+  MissingConnectionHeader
+  InvalidConnectionHeader
+  MissingUpgradeHeader
+  InvalidUpgradeHeader
+  MissingWebsocketVersion
+  MissingWebsocketKey
+}
+
+/// Upgrades an HTTP connection to WebSocket.
+/// 
 pub fn upgrade_websocket(
   req: Request(Connection),
   transport: Transport,
@@ -437,7 +829,25 @@ pub fn upgrade_websocket(
   Ok(#(extensions, permessage_deflate))
 }
 
-/// Appends default headers to HTTP responses
+// Response
+// -----------------------------------------------------------------------------
+
+/// Response body variants.
+/// 
+pub type ResponseBody {
+  TextData(String)
+  BytesData(BytesTree)
+  BitsData(BitArray)
+  StringTreeData(StringTree)
+  File(descriptor: file.IoDevice, offset: Int, size: Int)
+  Chunked
+  Websocket
+  SSE
+  Empty
+}
+
+/// Appends default headers to HTTP responses.
+/// 
 pub fn append_default_headers(
   resp: Response(a),
   req: Request(Connection),
@@ -461,6 +871,8 @@ pub fn append_default_headers(
   }
 }
 
+/// Sets the content length header if it is not already set.
+/// 
 pub fn set_content_length(resp: Response(BitArray)) -> Response(BitArray) {
   case response.get_header(resp, "content-length") {
     Ok(_) -> resp
@@ -471,138 +883,8 @@ pub fn set_content_length(resp: Response(BitArray)) -> Response(BitArray) {
   }
 }
 
-// -----------------------------------------------------------------------------
-// SOCKET OPERATIONS
-// -----------------------------------------------------------------------------
-
-/// Reads data from socket with timeout and size limits
-fn read_from_socket(
-  transport transport: Transport,
-  socket socket: Socket,
-  buffer buffer: Buffer,
-  on_error on_error: ParseError,
-) -> Result(Buffer, ParseError) {
-  let read_size = int.min(buffer.remaining, max_reading_size)
-
-  use data <- try(
-    transport.receive_timeout(transport, socket, read_size, 5000)
-    |> replace_error(on_error),
-  )
-
-  let new_buffer = buffer.append_size(buffer, data, read_size)
-
-  case new_buffer.remaining {
-    0 -> Ok(new_buffer)
-    _ -> read_from_socket(transport:, socket:, buffer: new_buffer, on_error:)
-  }
-}
-
-// -----------------------------------------------------------------------------
-// HEADERS
-// -----------------------------------------------------------------------------
-
-/// Parses HTTP headers from the buffer
-fn parse_headers(
-  transport transport: Transport,
-  socket socket: Socket,
-  buffer buffer: Buffer,
-  headers headers: Dict(String, String),
-) {
-  case decoder.decode_packet(HttphBin, buffer) {
-    Ok(Packet(HttpEoh, rest)) -> Ok(#(headers, rest))
-    Ok(Packet(HttpHeader(idx, field, value), rest)) -> {
-      use field <- try(case decoder.formatted_field_by_idx(idx) {
-        Ok(field) -> Ok(field)
-        Error(Nil) -> {
-          bit_array.to_string(field)
-          |> result.map(string.lowercase)
-          |> replace_error(InvalidHeaders)
-        }
-      })
-
-      use value <- try(
-        validate_field_value(value) |> replace_error(InvalidHeaders),
-      )
-
-      let new_buffer = buffer.new(rest)
-
-      use _ <- try(case field {
-        "host" -> {
-          case dict.has_key(headers, field) {
-            True -> Error(DuplicateHost)
-            False -> Ok(Nil)
-          }
-        }
-        "content-length" -> {
-          int.parse(value)
-          |> result.try(fn(value) {
-            case value < 0 {
-              True -> Error(Nil)
-              False -> Ok(Nil)
-            }
-          })
-          |> result.replace_error(InvalidContentLength)
-        }
-        _ -> Ok(Nil)
-      })
-
-      insert_header(headers, field, value)
-      |> parse_headers(transport:, socket:, buffer: new_buffer, headers: _)
-    }
-    Ok(More(size)) -> {
-      let read_size = option.unwrap(size, 0)
-
-      let sized_buffer = buffer.sized(buffer, read_size)
-
-      use new_buffer <- try(read_from_socket(
-        transport:,
-        socket:,
-        buffer: sized_buffer,
-        on_error: InvalidHeaders,
-      ))
-
-      parse_headers(transport:, socket:, buffer: new_buffer, headers:)
-    }
-    _ -> Error(InvalidHeaders)
-  }
-}
-
-/// Inserts a header into the headers dictionary
-fn insert_header(
-  headers: Dict(String, String),
-  field: String,
-  value: String,
-) -> Dict(String, String) {
-  case field != "set-cookie" {
-    True ->
-      dict.upsert(headers, field, fn(target) {
-        case target {
-          option.Some(existing) -> existing <> ", " <> value
-          option.None -> value
-        }
-      })
-    False -> dict.insert(headers, available_cookie_key(headers, 0), value)
-  }
-}
-
-/// Finds an available key for set-cookie headers
-fn available_cookie_key(headers: Dict(String, String), idx: Int) -> String {
-  let key = case idx {
-    0 -> "set-cookie"
-    n -> "set-cookie-" <> int.to_string(n)
-  }
-
-  case dict.has_key(headers, key) {
-    True -> available_cookie_key(headers, idx + 1)
-    False -> key
-  }
-}
-
-// -----------------------------------------------------------------------------
-// REQUEST HANDLING
-// -----------------------------------------------------------------------------
-
-/// Handles 100-continue expectations
+/// Handles 100-continue expectations.
+/// 
 pub fn handle_continue(req: Request(Connection)) -> Result(Nil, ParseError) {
   let expect =
     req.headers
@@ -621,290 +903,3 @@ pub fn handle_continue(req: Request(Connection)) -> Result(Nil, ParseError) {
     Error(Nil) -> Ok(Nil)
   }
 }
-
-// -----------------------------------------------------------------------------
-// BODY
-// -----------------------------------------------------------------------------
-
-/// Creates a consumer function that reads `N` amount of bytes from the request
-/// body until it is fully consumed
-fn do_stream_body(req: Request(Connection), buffer: Buffer) -> Consumer {
-  fn(size: Int) {
-    let buffer_size = bit_array.byte_size(buffer.data)
-
-    case buffer.remaining, buffer_size {
-      // Request body is fully consumed
-      0, 0 -> Ok(Done)
-
-      // Request body is supposed to be fully consumed but there is more data in buffer
-      0, _ -> {
-        let #(data, rest) = buffer.split(buffer, size)
-        Ok(Consumed(data, do_stream_body(req, buffer.new(rest))))
-      }
-
-      // Request body is not fully consumed and there is enough data in buffer to consume `size` bytes
-      _, buffer_size if buffer_size >= size -> {
-        let #(data, rest) = buffer.split(buffer, size)
-        let new_buffer = buffer.new_sized(rest, buffer.remaining)
-        Ok(Consumed(data, do_stream_body(req, new_buffer)))
-      }
-
-      // Request body is not fully consumed and there is not enough data in buffer to consume `size` bytes
-      _, _ -> {
-        use read_buffer <- try(read_from_socket(
-          transport: req.body.transport,
-          socket: req.body.socket,
-          buffer: buffer.empty(),
-          on_error: InvalidBody,
-        ))
-
-        let new_buffer =
-          buffer.new_sized(
-            <<buffer.data:bits, read_buffer.data:bits>>,
-            int.max(0, buffer.remaining - bit_array.byte_size(read_buffer.data)),
-          )
-
-        let #(data, rest) = buffer.split(new_buffer, size)
-        Ok(Consumed(data, do_stream_body(req, buffer.new(rest))))
-      }
-    }
-  }
-}
-
-// -----------------------------------------------------------------------------
-// CHUNKED BODY
-// -----------------------------------------------------------------------------
-
-/// Reads chunked transfer-encoded body
-fn read_chunked_body(
-  transport transport: Transport,
-  socket socket: Socket,
-  buffer buffer: Buffer,
-  accumulated_body accumulated_body: BitArray,
-  body_size_limit body_size_limit: Int,
-  body_current_size body_current_size: Int,
-) -> Result(#(BitArray, Buffer), ParseError) {
-  use <- bool.guard(body_current_size > body_size_limit, Error(BodyTooLarge))
-
-  case parse_body_chunk(buffer) {
-    Ok(FinalChunk(rest)) -> Ok(#(accumulated_body, rest))
-    Ok(Incomplete) -> {
-      use new_buffer <- try(read_from_socket(
-        transport:,
-        socket:,
-        buffer:,
-        on_error: InvalidBody,
-      ))
-
-      read_chunked_body(
-        transport:,
-        socket:,
-        buffer: new_buffer,
-        accumulated_body:,
-        body_size_limit:,
-        body_current_size:,
-      )
-    }
-    Ok(Chunk(chunk, size, rest)) ->
-      read_chunked_body(
-        transport:,
-        socket:,
-        buffer: rest,
-        accumulated_body: <<accumulated_body:bits, chunk:bits>>,
-        body_size_limit:,
-        body_current_size: body_current_size + size,
-      )
-    Error(error) -> Error(error)
-  }
-}
-
-/// Parses a single chunk from the chunked body
-fn parse_body_chunk(buffer: Buffer) -> Result(BodyChunk, ParseError) {
-  case split(buffer.data, <<"\r\n">>, []) {
-    [<<"0">>, rest] -> Ok(FinalChunk(buffer.new(rest)))
-    [chunk_size, rest] -> {
-      use size <- try(
-        bit_array.to_string(chunk_size)
-        |> try(int.base_parse(_, 16))
-        |> replace_error(InvalidBody),
-      )
-
-      case split(rest, <<"\r\n">>, []) {
-        [chunk, rest] -> {
-          case bit_array.byte_size(chunk) == size {
-            True -> Ok(Chunk(chunk, size, buffer.new(rest)))
-            False -> Error(InvalidBody)
-          }
-        }
-        _ -> Ok(Incomplete)
-      }
-    }
-    _ -> Ok(Incomplete)
-  }
-}
-
-/// Creates a consumer function that reads `N` amount of bytes from the chunked 
-/// request body until it is fully consumed
-fn do_stream_body_chunked(
-  req: Request(Connection),
-  chunked_stream_state: ChunkedStreamState,
-) -> Consumer {
-  fn(size: Int) {
-    let read_result =
-      read_from_socket_until(
-        transport: req.body.transport,
-        socket: req.body.socket,
-        state: chunked_stream_state,
-        until: size,
-      )
-
-    case read_result {
-      Ok(#(data, ChunkedStreamState(done: True, ..))) ->
-        Ok(Consumed(data, fn(_) { Ok(Done) }))
-      Ok(#(data, state)) ->
-        Ok(Consumed(data, do_stream_body_chunked(req, state)))
-      Error(_) -> Error(InvalidBody)
-    }
-  }
-}
-
-/// Reads data from socket until `N` amount of bytes are read
-fn read_from_socket_until(
-  transport transport: Transport,
-  socket socket: Socket,
-  state state: ChunkedStreamState,
-  until until: Int,
-) -> Result(#(BitArray, ChunkedStreamState), ParseError) {
-  let size = bit_array.byte_size(state.data.data)
-
-  case state.done, size {
-    // Data buffer contains enough data to consume `until` bytes
-    _, size if size >= until -> {
-      let #(data, rest) = buffer.split(state.data, until)
-      Ok(#(data, ChunkedStreamState(..state, data: buffer.new(rest))))
-    }
-
-    // Accomplished the reading
-    True, _ -> Ok(#(state.data.data, state))
-
-    // Data buffer does not contain enough data to consume `until` bytes
-    False, _ -> {
-      case parse_body_chunk(state.chunk) {
-        Ok(FinalChunk(_)) ->
-          read_from_socket_until(
-            transport:,
-            socket:,
-            state: ChunkedStreamState(
-              ..state,
-              chunk: buffer.empty(),
-              done: True,
-            ),
-            until:,
-          )
-        Ok(Incomplete) -> {
-          use new_buffer <- try(read_from_socket(
-            transport:,
-            socket:,
-            buffer: state.chunk,
-            on_error: InvalidBody,
-          ))
-
-          read_from_socket_until(
-            transport:,
-            socket:,
-            state: ChunkedStreamState(..state, chunk: new_buffer),
-            until:,
-          )
-        }
-        Ok(Chunk(chunk, size, rest)) -> {
-          read_from_socket_until(
-            transport:,
-            socket:,
-            state: ChunkedStreamState(
-              ..state,
-              data: buffer.append_size(state.data, chunk, size),
-              chunk: rest,
-            ),
-            until:,
-          )
-        }
-        Error(error) -> Error(error)
-      }
-    }
-  }
-}
-
-// -----------------------------------------------------------------------------
-// TRAILER HEADERS
-// -----------------------------------------------------------------------------
-
-/// Handles trailer headers in chunked responses
-fn handle_trailers(
-  req: Request(BitArray),
-  set: Set(String),
-  rest: Buffer,
-) -> Request(BitArray) {
-  case decoder.decode_packet(HttphBin, rest) {
-    Ok(Packet(HttpEoh, _)) -> req
-    Ok(Packet(HttpHeader(idx, field, value), header_rest)) -> {
-      let field_name = case decoder.formatted_field_by_idx(idx) {
-        Ok(field_name) -> Ok(field_name)
-        Error(Nil) -> {
-          bit_array.to_string(field)
-          |> result.map(string.lowercase)
-        }
-      }
-
-      case field_name {
-        Ok(field_name) -> {
-          case
-            set.contains(set, field_name) && !is_forbidden_trailer(field_name)
-          {
-            True -> {
-              case bit_array.to_string(value) {
-                Ok(value) -> {
-                  request.set_header(req, field_name, value)
-                  |> handle_trailers(set, buffer.new(header_rest))
-                }
-                Error(Nil) -> handle_trailers(req, set, rest)
-              }
-            }
-            False -> handle_trailers(req, set, rest)
-          }
-        }
-        Error(Nil) -> handle_trailers(req, set, rest)
-      }
-    }
-    _ -> req
-  }
-}
-
-/// Checks if a header field is forbidden in trailers
-fn is_forbidden_trailer(field: String) -> Bool {
-  case string.lowercase(field) {
-    "transfer-encoding"
-    | "content-length"
-    | "host"
-    | "cache-control"
-    | "expect"
-    | "max-forwards"
-    | "pragma"
-    | "range"
-    | "te" -> True
-    _ -> False
-  }
-}
-
-// -----------------------------------------------------------------------------
-// EXTERNAL FFI
-// -----------------------------------------------------------------------------
-
-@external(erlang, "binary", "split")
-fn split(
-  subject: BitArray,
-  pattern: BitArray,
-  options: List(atom.Atom),
-) -> List(BitArray)
-
-@external(erlang, "ewe_ffi", "validate_field_value")
-fn validate_field_value(value: BitArray) -> Result(String, Nil)

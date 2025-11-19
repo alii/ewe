@@ -1,16 +1,10 @@
-// -----------------------------------------------------------------------------
-// IMPORTS
-// -----------------------------------------------------------------------------
 import gleam/bytes_tree
 import gleam/http/response
 import gleam/int
 import gleam/list
 
-// -----------------------------------------------------------------------------
-// PUBLIC API
-// -----------------------------------------------------------------------------
-
-/// Encodes an HTTP response into bytes
+/// Encodes an HTTP response into bytes.
+/// 
 pub fn encode_response(
   response: response.Response(BitArray),
 ) -> bytes_tree.BytesTree {
@@ -20,7 +14,9 @@ pub fn encode_response(
   |> bytes_tree.append(response.body)
 }
 
-pub fn setup_encoded_response(
+/// Encodes the HTTP status line and headers of an HTTP response.
+/// 
+pub fn encode_response_partially(
   response: response.Response(a),
 ) -> bytes_tree.BytesTree {
   bytes_tree.new()
@@ -28,11 +24,8 @@ pub fn setup_encoded_response(
   |> bytes_tree.append(encode_headers(response.headers))
 }
 
-// -----------------------------------------------------------------------------
-// ENCODING
-// -----------------------------------------------------------------------------
-
-/// Encodes the HTTP status line
+/// Encodes the HTTP status line.
+/// 
 fn encode_status_line(status: Int) -> BitArray {
   let status_name = status_to_bit_array(status)
   let status = int.to_string(status)
@@ -40,7 +33,8 @@ fn encode_status_line(status: Int) -> BitArray {
   <<"HTTP/1.1 ", status:utf8, " ", status_name:bits, "\r\n">>
 }
 
-/// Encodes HTTP headers into bytes
+/// Encodes HTTP headers into bytes.
+/// 
 fn encode_headers(headers: List(#(String, String))) -> BitArray {
   let headers =
     list.fold(headers, <<>>, fn(acc, headers) {
@@ -52,11 +46,8 @@ fn encode_headers(headers: List(#(String, String))) -> BitArray {
   <<headers:bits, "\r\n">>
 }
 
-// -----------------------------------------------------------------------------
-// MAPPING
-// -----------------------------------------------------------------------------
-
-/// Maps HTTP status codes to their text descriptions
+/// Maps HTTP status codes to their text descriptions.
+/// 
 fn status_to_bit_array(status: Int) -> BitArray {
   case status {
     100 -> <<"Continue">>

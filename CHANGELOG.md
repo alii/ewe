@@ -1,5 +1,10 @@
 # Changelog
 
+# v2.1.2 - 19.11.2025
+
+- Improve internal codebase
+- Remove `exception` module with a package
+
 # v2.1.1 - 14.11.2025
 
 - Bring back active socket option for SSE

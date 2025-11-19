@@ -1,8 +1,12 @@
 import compresso
 import ewe/internal/buffer
 import ewe/internal/encoder
-import ewe/internal/exception
 import ewe/internal/file
+import ewe/internal/http1.{
+  type Connection, type HttpVersion, type ResponseBody, BitsData, BytesData,
+  Chunked, Empty, File, SSE, StringTreeData, TextData, Websocket,
+} as ewe_http
+import exception
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/erlang/process
@@ -13,68 +17,69 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import gleam/string_tree
-import glisten/internal/handler.{Close, Internal}
+import glisten
+import glisten/internal/handler.{Close, Internal} as glisten_handler
 import glisten/socket
 import glisten/transport
 import logging
 
-import ewe/internal/http1.{
-  type Connection, type ResponseBody, BitsData, BytesData, Chunked, Empty, File,
-  SSE, StringTreeData, TextData, Websocket,
-} as ewe_http
-
-import glisten
-
-pub type State {
-  State(idle_timer: Option(process.Timer))
+/// HTTP/1.1 handler state.
+/// 
+pub type Http1Handler {
+  Http1Handler(idle_timer: Option(process.Timer))
 }
 
-pub fn init() -> State {
-  State(idle_timer: None)
+/// Initializes the HTTP/1.1 handler state.
+/// 
+pub fn init() -> Http1Handler {
+  Http1Handler(idle_timer: None)
 }
 
-pub type Message {
-  IdleTimeout
-}
-
-pub type HandleResult {
-  Continue(new_state: State)
+/// Action to take after handling a packet.
+/// 
+pub type Next {
+  Continue(state: Http1Handler)
   Stop
-  Http2Upgrade(data: BitArray)
-  Http2CleartextUpgrade(req: Request(ewe_http.Connection), settings: String)
+  Http2Upgrade(upgrade: Http2Upgrade)
 }
 
+/// HTTP/2 upgrade options.
+/// 
+pub type Http2Upgrade {
+  OverCleartext(request: Request(Connection), settings: String)
+  OverTLS(data: BitArray)
+}
+
+/// Handles received glisten packet.
+/// 
 pub fn handle_packet(
-  state: State,
-  msg: BitArray,
-  conn: Connection,
-  subject: process.Subject(handler.Message(_)),
-  handler: fn(Request(ewe_http.Connection)) -> Response(ewe_http.ResponseBody),
-  on_crash: Response(ewe_http.ResponseBody),
+  state: Http1Handler,
+  connection: Connection,
+  data: BitArray,
+  glisten_subject: process.Subject(glisten_handler.Message(_)),
+  handler: fn(Request(Connection)) -> Response(ResponseBody),
+  on_crash: Response(ResponseBody),
   idle_timeout: Int,
-) -> HandleResult {
+) -> Next {
   case state.idle_timer {
     Some(timer) -> process.cancel_timer(timer)
     None -> process.TimerNotFound
   }
 
-  let parsed = ewe_http.parse_request(conn, buffer.new(msg))
+  case ewe_http.parse_request(connection, buffer.new(data)) {
+    Ok(ewe_http.Http1Request(request, version)) -> {
+      let call_result =
+        call(request, version, glisten_subject, handler, on_crash, idle_timeout)
 
-  case parsed {
-    Ok(ewe_http.Http1Request(req, version)) -> {
-      let called =
-        call_handler(req, version, subject, handler, on_crash, idle_timeout)
-      case called {
+      case call_result {
         Ok(state) -> Continue(state)
         Error(Nil) -> Stop
       }
     }
-
-    Ok(ewe_http.Http2Upgrade(data)) -> Http2Upgrade(data)
-
-    Ok(ewe_http.Http2CleartextUpgrade(req, settings)) ->
-      Http2CleartextUpgrade(req, settings)
-
+    Ok(ewe_http.Http2Upgrade(ewe_http.OverTLS(data))) ->
+      Http2Upgrade(OverTLS(data:))
+    Ok(ewe_http.Http2Upgrade(ewe_http.OverCleartext(request, settings))) ->
+      Http2Upgrade(OverCleartext(request:, settings:))
     Error(reason) -> {
       let status = case reason {
         ewe_http.InvalidVersion -> 505
@@ -86,23 +91,25 @@ pub fn handle_packet(
         |> response.set_body(<<>>)
         |> response.set_header("connection", "close")
         |> encoder.encode_response()
-        |> transport.send(conn.transport, conn.socket, _)
+        |> transport.send(connection.transport, connection.socket, _)
 
       Stop
     }
   }
 }
 
-fn call_handler(
-  req: Request(ewe_http.Connection),
-  version: ewe_http.HttpVersion,
-  subject: process.Subject(handler.Message(user_message)),
-  handler: fn(Request(ewe_http.Connection)) -> Response(ewe_http.ResponseBody),
-  on_crash: Response(ewe_http.ResponseBody),
+/// Takes parsed HTTP request and calls the handler.
+/// 
+fn call(
+  request: Request(Connection),
+  version: HttpVersion,
+  glisten_subject: process.Subject(glisten_handler.Message(_)),
+  handler: fn(Request(Connection)) -> Response(ResponseBody),
+  on_crash: Response(ResponseBody),
   idle_timeout: Int,
-) -> Result(State, Nil) {
-  let resp = case exception.rescue(fn() { handler(req) }) {
-    Ok(resp) -> resp
+) -> Result(Http1Handler, Nil) {
+  let response = case exception.rescue(fn() { handler(request) }) {
+    Ok(response) -> response
     Error(e) -> {
       logging.log(logging.Error, string.inspect(e))
 
@@ -110,53 +117,65 @@ fn call_handler(
     }
   }
 
-  case resp.body {
+  case response.body {
     Websocket | SSE | Chunked -> Error(Nil)
-    File(descriptor, offset, size) -> {
-      let sent = handle_resp_file(req, version, resp, descriptor, offset, size)
+    File(descriptor, offset, size) ->
+      send_file(request, version, response, descriptor, offset, size)
+      |> on_sent(response, glisten_subject, idle_timeout)
 
-      case sent, is_connection_close(resp) {
-        Ok(Nil), False -> {
-          let timer = process.send_after(subject, idle_timeout, Internal(Close))
-          Ok(State(Some(timer)))
-        }
-        _, _ -> Error(Nil)
-      }
-    }
-    _ -> {
-      let sent = handle_resp_body(req, version, resp, resp.body)
-      case sent, is_connection_close(resp) {
-        Ok(Nil), False -> {
-          let timer = process.send_after(subject, idle_timeout, Internal(Close))
-          Ok(State(Some(timer)))
-        }
-        _, _ -> Error(Nil)
-      }
-    }
+    _ ->
+      send_body(request, version, response)
+      |> on_sent(response, glisten_subject, idle_timeout)
   }
 }
 
-/// Handles the file response body and sends it to the client
-fn handle_resp_file(
-  req: Request(Connection),
-  version: ewe_http.HttpVersion,
-  resp: Response(ResponseBody),
+/// Actions to take after response is sent.
+/// 
+fn on_sent(
+  sent: Result(Nil, glisten.SocketReason),
+  response: Response(ResponseBody),
+  glisten_subject: process.Subject(glisten_handler.Message(_)),
+  idle_timeout: Int,
+) -> Result(Http1Handler, Nil) {
+  case sent, is_connection_close(response) {
+    Ok(Nil), False -> {
+      let timer =
+        process.send_after(glisten_subject, idle_timeout, Internal(Close))
+
+      Ok(Http1Handler(Some(timer)))
+    }
+    _, _ -> Error(Nil)
+  }
+}
+
+/// Sends a file to the client.
+/// 
+fn send_file(
+  request: Request(Connection),
+  version: HttpVersion,
+  response: Response(ResponseBody),
   descriptor: file.IoDevice,
   offset: Int,
   size: Int,
 ) -> Result(Nil, glisten.SocketReason) {
-  let resp = case response.get_header(resp, "content-length") {
-    Ok(_) -> resp
+  let response = case response.get_header(response, "content-length") {
+    Ok(_) -> response
     Error(Nil) ->
-      response.set_header(resp, "content-length", int.to_string(size))
+      response.set_header(response, "content-length", int.to_string(size))
   }
 
   let sent =
-    ewe_http.append_default_headers(resp, req, version)
-    |> encoder.setup_encoded_response()
-    |> transport.send(req.body.transport, req.body.socket, _)
+    ewe_http.append_default_headers(response, request, version)
+    |> encoder.encode_response_partially()
+    |> transport.send(request.body.transport, request.body.socket, _)
     |> result.try(fn(_) {
-      file.send(req.body.transport, req.body.socket, descriptor, offset, size)
+      file.send(
+        request.body.transport,
+        request.body.socket,
+        descriptor,
+        offset,
+        size,
+      )
       |> result.replace_error(socket.Badarg)
     })
 
@@ -165,14 +184,14 @@ fn handle_resp_file(
   sent
 }
 
-/// Handles the response body and sends it to the client
-fn handle_resp_body(
-  req: Request(Connection),
-  version: ewe_http.HttpVersion,
-  resp: Response(ResponseBody),
-  body: ResponseBody,
+/// Sends a body to the client.
+/// 
+fn send_body(
+  request: Request(Connection),
+  version: HttpVersion,
+  response: Response(ResponseBody),
 ) -> Result(Nil, glisten.SocketReason) {
-  let bits = case body {
+  let bits = case response.body {
     TextData(text) -> bit_array.from_string(text)
     StringTreeData(string_tree) ->
       string_tree.to_string(string_tree) |> bit_array.from_string
@@ -183,15 +202,14 @@ fn handle_resp_body(
   }
 
   let content_length = bit_array.byte_size(bits)
-
-  let resp = case content_length > 1024 {
+  let response = case content_length > 1024 {
     True ->
-      case encode_gzip(req, resp) {
+      case can_encode_gzip(request, response) {
         True -> {
           let compressed = compresso.gzip(bits)
           let content_length = bit_array.byte_size(compressed)
 
-          remove_charset(resp)
+          remove_charset(response)
           |> response.set_header("content-encoding", "gzip")
           |> response.set_header("vary", "Accept-Encoding")
           |> response.set_header(
@@ -201,44 +219,52 @@ fn handle_resp_body(
           |> response.set_body(compressed)
         }
         _ ->
-          response.set_body(resp, bits)
+          response.set_body(response, bits)
           |> response.set_header(
             "content-length",
             int.to_string(content_length),
           )
       }
     False ->
-      response.set_body(resp, bits)
+      response.set_body(response, bits)
       |> response.set_header("content-length", int.to_string(content_length))
   }
 
-  ewe_http.append_default_headers(resp, req, version)
+  ewe_http.append_default_headers(response, request, version)
   |> encoder.encode_response()
-  |> transport.send(req.body.transport, req.body.socket, _)
+  |> transport.send(request.body.transport, request.body.socket, _)
 }
 
-fn encode_gzip(req: Request(ewe_http.Connection), resp: Response(a)) -> Bool {
-  let req =
-    request.get_header(req, "accept-encoding")
+/// Can the body be encoded to gzip?
+/// 
+fn can_encode_gzip(request: Request(Connection), response: Response(_)) -> Bool {
+  let accept_encoding =
+    request.get_header(request, "accept-encoding")
     |> result.map(string.contains(_, "gzip"))
 
-  let resp = response.get_header(resp, "content-encoding")
+  let content_encoding = response.get_header(response, "content-encoding")
 
-  case req, resp {
+  case accept_encoding, content_encoding {
     Ok(True), Error(Nil) -> True
     _, _ -> False
   }
 }
 
-fn remove_charset(resp: Response(a)) -> Response(a) {
-  response.get_header(resp, "content-type")
+/// Removes the charset from the content-type header.
+/// 
+fn remove_charset(response: Response(_)) -> Response(_) {
+  response.get_header(response, "content-type")
   |> result.try(string.split_once(_, ";"))
-  |> result.map(fn(parts) { response.set_header(resp, "content-type", parts.0) })
-  |> result.unwrap(resp)
+  |> result.map(fn(parts) {
+    response.set_header(response, "content-type", parts.0)
+  })
+  |> result.unwrap(response)
 }
 
-fn is_connection_close(resp: Response(a)) -> Bool {
-  case response.get_header(resp, "connection") {
+/// Is the connection set to close?
+/// 
+fn is_connection_close(response: Response(_)) -> Bool {
+  case response.get_header(response, "connection") {
     Ok("close") -> True
     _ -> False
   }

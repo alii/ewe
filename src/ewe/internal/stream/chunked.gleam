@@ -1,6 +1,3 @@
-// -----------------------------------------------------------------------------
-// IMPORTS
-// -----------------------------------------------------------------------------
 import ewe/internal/encoder
 import gleam/bit_array
 import gleam/bytes_tree
@@ -14,27 +11,8 @@ import glisten/socket.{type Socket}
 import glisten/transport.{type Transport}
 import logging
 
-// -----------------------------------------------------------------------------
-// PUBLIC TYPES
-// -----------------------------------------------------------------------------
-
-// Represents a chunked response connection
-pub type ChunkedBody {
-  ChunkedBody(transport: Transport, socket: Socket)
-}
-
-// Represents an instruction on how chunked response should proceed
-pub type ChunkedNext(user_state) {
-  Continue(user_state)
-  NormalStop
-  AbnormalStop(reason: String)
-}
-
-// -----------------------------------------------------------------------------
-// PUBLIC API
-// -----------------------------------------------------------------------------
-
-/// Sends a response for a chunked transfer encoding
+/// Sends a response for a chunked transfer encoding.
+/// 
 pub fn send_response(
   resp: Response(a),
   transport: Transport,
@@ -44,12 +22,27 @@ pub fn send_response(
     Ok("chunked") -> resp
     _ -> response.set_header(resp, "transfer-encoding", "chunked")
   }
-  |> encoder.setup_encoded_response()
+  |> encoder.encode_response_partially()
   |> transport.send(transport, socket, _)
   |> result.replace_error(Nil)
 }
 
-/// Starts a new chunked response connection
+/// Represents a chunked response connection.
+/// 
+pub type ChunkedBody {
+  ChunkedBody(transport: Transport, socket: Socket)
+}
+
+/// Represents an instruction on how chunked response should proceed.
+/// 
+pub type ChunkedNext(user_state) {
+  Continue(user_state)
+  NormalStop
+  AbnormalStop(reason: String)
+}
+
+/// Starts a new chunked response connection.
+/// 
 pub fn start(
   transport: Transport,
   socket: Socket,
@@ -109,7 +102,30 @@ pub fn start(
   |> result.map(after_start(_, transport, socket))
 }
 
-/// Sends a chunk to the client
+/// Maps actor's starting value to Nil.
+/// 
+fn after_start(
+  started: actor.Started(Subject(user_message)),
+  transport: Transport,
+  socket: Socket,
+) -> actor.Started(Nil) {
+  let assert Ok(pid) = process.subject_owner(started.data)
+  let _ = transport.controlling_process(transport, socket, pid)
+
+  actor.Started(..started, data: Nil)
+}
+
+/// Sends the end marker for chunked transfer encoding.
+/// 
+fn send_end(
+  transport: Transport,
+  socket: Socket,
+) -> Result(Nil, glisten.SocketReason) {
+  transport.send(transport, socket, bytes_tree.from_bit_array(<<"0\r\n\r\n">>))
+}
+
+/// Sends a chunk to the client.
+/// 
 pub fn send_chunk(
   transport: Transport,
   socket: Socket,
@@ -123,35 +139,13 @@ pub fn send_chunk(
   |> transport.send(transport, socket, _)
 }
 
-// -----------------------------------------------------------------------------
-// INTERNAL FUNCTIONS
-// -----------------------------------------------------------------------------
-
-/// Sends the end marker for chunked transfer encoding
-fn send_end(
-  transport: Transport,
-  socket: Socket,
-) -> Result(Nil, glisten.SocketReason) {
-  transport.send(transport, socket, bytes_tree.from_bit_array(<<"0\r\n\r\n">>))
-}
-
-/// Maps actor's starting value to Nil
-fn after_start(
-  started: actor.Started(Subject(user_message)),
-  transport: Transport,
-  socket: Socket,
-) -> actor.Started(Nil) {
-  let assert Ok(pid) = process.subject_owner(started.data)
-  let _ = transport.controlling_process(transport, socket, pid)
-
-  actor.Started(..started, data: Nil)
-}
-
-/// Converts an integer to a hexadecimal string
+/// Converts an integer to a hexadecimal string.
+/// 
 fn to_hex_string(integer: Int) -> String {
   integer_to_list(integer, 16)
 }
 
-/// Converts an integer to a string in the given base
+/// Converts an integer to a string in the given base.
+/// 
 @external(erlang, "erlang", "integer_to_list")
 fn integer_to_list(integer: Int, base: Int) -> String

@@ -140,6 +140,12 @@
 // IMPORTS
 // -----------------------------------------------------------------------------
 
+import ewe/internal/file
+import ewe/internal/handler
+import ewe/internal/http1 as ewe_http
+import ewe/internal/stream/chunked
+import ewe/internal/stream/sse
+import ewe/internal/stream/websocket
 import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
 import gleam/dynamic
@@ -155,23 +161,13 @@ import gleam/otp/static_supervisor.{type Supervisor} as supervisor
 import gleam/otp/supervision
 import gleam/result
 import gleam/string_tree.{type StringTree}
-import logging
-
-import websocks
-
 import glisten
 import glisten/internal/listener
 import glisten/socket/options as glisten_options
 import glisten/transport
+import logging
+import websocks
 
-import ewe/internal/file
-import ewe/internal/handler
-import ewe/internal/http1 as ewe_http
-import ewe/internal/stream/chunked
-import ewe/internal/stream/sse
-import ewe/internal/stream/websocket
-
-// -----------------------------------------------------------------------------
 // CONNECTION
 // -----------------------------------------------------------------------------
 
@@ -182,7 +178,6 @@ import ewe/internal/stream/websocket
 pub type Connection =
   ewe_http.Connection
 
-// -----------------------------------------------------------------------------
 // IP ADDRESS
 // -----------------------------------------------------------------------------
 
@@ -224,7 +219,6 @@ fn ewe_to_glisten_ip(ip: IpAddress) -> glisten.IpAddress {
   }
 }
 
-// -----------------------------------------------------------------------------
 // INFORMATION
 // -----------------------------------------------------------------------------
 
@@ -259,7 +253,6 @@ pub fn get_server_info(
   SocketAddress(ip: ip_address, port: server_info.port)
 }
 
-// -----------------------------------------------------------------------------
 // RESPONSE
 // -----------------------------------------------------------------------------
 
@@ -384,15 +377,8 @@ pub fn file(
   }
 }
 
-// -----------------------------------------------------------------------------
 // BUILDER
 // -----------------------------------------------------------------------------
-
-type Handler =
-  fn(Request) -> Response
-
-type OnStart =
-  fn(http.Scheme, SocketAddress) -> Nil
 
 /// Ewe's server builder. Contains all server configurations. Can be adjusted
 /// with the following functions:
@@ -410,12 +396,12 @@ type OnStart =
 ///
 pub opaque type Builder {
   Builder(
-    handler: Handler,
+    handler: fn(Request) -> Response,
     port: Int,
     interface: String,
     ipv6: Bool,
     tls: Option(#(String, String)),
-    on_start: OnStart,
+    on_start: fn(http.Scheme, SocketAddress) -> Nil,
     on_crash: Response,
     listener_name: process.Name(listener.Message),
     idle_timeout: Int,
@@ -430,11 +416,11 @@ pub opaque type Builder {
 /// - No ipv6 support
 /// - No TLS support
 /// - Default listener name for server information retrieval
-/// - on_start: prints `Listening on <scheme>://<ip_address>:<port>`
+/// - on_start: logs `Listening on <scheme>://<ip_address>:<port>`
 /// - on_crash: empty 500 response
 /// - idle_timeout: connection is closed after 10_000ms of inactivity
 ///
-pub fn new(handler: Handler) -> Builder {
+pub fn new(handler: fn(Request) -> Response) -> Builder {
   Builder(
     handler:,
     port: 8080,
@@ -554,7 +540,6 @@ pub fn idle_timeout(builder: Builder, idle_timeout: Int) -> Builder {
   }
 }
 
-// -----------------------------------------------------------------------------
 // SERVER
 // -----------------------------------------------------------------------------
 
@@ -626,7 +611,6 @@ pub fn supervised(
   supervision.supervisor(fn() { start(builder) })
 }
 
-// -----------------------------------------------------------------------------
 // REQUEST
 // -----------------------------------------------------------------------------
 
@@ -704,11 +688,12 @@ fn consumer_adapter(
   }
 }
 
-// -----------------------------------------------------------------------------
-// Chunked Response Body
+// CHUNKED RESPONSE
 // -----------------------------------------------------------------------------
 
-/// Represents a chunked response body. This type is used to send a chunked response to the client.
+/// Represents a chunked response body. This type is used to send a chunked 
+/// response to the client.
+/// 
 pub type ChunkedBody =
   chunked.ChunkedBody
 
@@ -810,7 +795,6 @@ pub fn send_chunk(
   chunked.send_chunk(body.transport, body.socket, chunk)
 }
 
-// -----------------------------------------------------------------------------
 // WEBSOCKET
 // -----------------------------------------------------------------------------
 
@@ -1083,7 +1067,6 @@ pub fn send_close_frame(
   |> to_websocket_next()
 }
 
-// -----------------------------------------------------------------------------
 // SERVER-SENT EVENT
 // -----------------------------------------------------------------------------
 
