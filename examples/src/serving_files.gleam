@@ -26,7 +26,7 @@ fn serve_file(path: String) -> Response {
   // In production, make sure to validate paths to prevent directory traversal
   // attacks! (e.g., requests to "../../../etc/passwd")
   //
-  case ewe.file("public" <> path, offset: None, limit: None) {
+  case ewe.file("public/" <> path, offset: None, limit: None) {
     Ok(file) -> {
       // Using "application/octet-stream" is safe for any file type, but you
       // may want to specify content-type based on file extension in production.
