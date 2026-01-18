@@ -25,7 +25,7 @@ pub fn main() {
   let pubsub_name = process.new_name("pubsub")
   let pubsub = process.named_subject(pubsub_name)
 
-  // Configure and start the supervision tree with pubsub worker and the ewe 
+  // Configure and start the supervision tree with pubsub worker and the ewe
   // server, that listens on port 8080
   let assert Ok(_) =
     supervisor.new(supervisor.OneForAll)
@@ -342,7 +342,7 @@ fn handle_stream(req: Request, chunk_size: Int) -> Response {
 }
 
 fn serve_file(path: String) -> Response {
-  case ewe.file("public" <> path, offset: None, limit: None) {
+  case ewe.file("public/" <> path, offset: None, limit: None) {
     Ok(file) -> {
       response.new(200)
       |> response.set_header("content-type", "application/octet-stream")
