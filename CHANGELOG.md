@@ -1,5 +1,10 @@
 # Changelog
 
+# Unreleased
+
+- Move examples to appropriate folder
+- Improve examples with useful documentation lines
+
 # v2.1.2 - 19.11.2025
 
 - Improve internal codebase
