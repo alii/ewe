@@ -84,12 +84,12 @@
 ////     ]
 ////   }
 //// ]
-//// 
+////
 //// const callback = () => {
 ////   const list = document.querySelector(".sidebar > ul:last-of-type")
 ////   const sortedLists = document.createDocumentFragment()
 ////   const sortedMembers = document.createDocumentFragment()
-//// 
+////
 ////   for (const section of docs) {
 ////     sortedLists.append((() => {
 ////       const node = document.createElement("h3")
@@ -101,12 +101,12 @@
 ////       node.append(section.header)
 ////       return node
 ////     })())
-//// 
+////
 ////     const sortedList = document.createElement("ul")
 ////     sortedLists.append(sortedList)
-//// 
+////
 ////     const sortedFunctions = [...section.functions].sort()
-//// 
+////
 ////     for (const funcName of sortedFunctions) {
 ////       const href = `#${funcName}`
 ////       const member = document.querySelector(
@@ -117,7 +117,7 @@
 ////       sortedMembers.append(member)
 ////     }
 ////   }
-//// 
+////
 ////   document.querySelector(".sidebar").insertBefore(sortedLists, list)
 ////   document
 ////     .querySelector(".module-members:has(#module-values)")
@@ -126,7 +126,7 @@
 ////       document.querySelector("#module-values").nextSibling
 ////     )
 //// }
-//// 
+////
 //// document.readyState !== "loading"
 ////   ? callback()
 ////   : document.addEventListener(
@@ -135,10 +135,6 @@
 ////     { once: true }
 ////   )
 //// </script>
-
-// -----------------------------------------------------------------------------
-// IMPORTS
-// -----------------------------------------------------------------------------
 
 import ewe/internal/file
 import ewe/internal/handler
@@ -192,7 +188,7 @@ pub type IpAddress {
 ///
 pub fn ip_address_to_string(address address: IpAddress) -> String {
   ewe_to_glisten_ip(address)
-  |> glisten.ip_address_to_string()
+  |> glisten.ip_address_to_string
 }
 
 fn glisten_to_ewe_ip(ip: glisten.IpAddress) -> IpAddress {
@@ -618,8 +614,10 @@ pub fn supervised(
 ///
 pub type BodyError {
   /// Body is larger than the provided limit.
+  ///
   BodyTooLarge
   /// Body is malformed.
+  ///
   InvalidBody
 }
 
@@ -691,9 +689,9 @@ fn consumer_adapter(
 // CHUNKED RESPONSE
 // -----------------------------------------------------------------------------
 
-/// Represents a chunked response body. This type is used to send a chunked 
+/// Represents a chunked response body. This type is used to send a chunked
 /// response to the client.
-/// 
+///
 pub type ChunkedBody =
   chunked.ChunkedBody
 
@@ -710,7 +708,7 @@ pub opaque type ChunkedNext(user_state) {
 }
 
 /// Instructs chunked response to continue processing.
-/// 
+///
 pub fn chunked_continue(user_state: user_state) -> ChunkedNext(user_state) {
   ChunkedContinue(user_state)
 }
@@ -738,9 +736,9 @@ fn to_internal_chunked_next(
 }
 
 /// Sets up the connection for chunked response.
-/// 
-/// `on_init` function is called once the chunked response process is 
-/// initialized. The argument is subject that can be used to send chunks to the 
+///
+/// `on_init` function is called once the chunked response process is
+/// initialized. The argument is subject that can be used to send chunks to the
 /// client. It must return initial state.
 ///
 /// `handler` function is called for every message received. It must return
@@ -992,47 +990,47 @@ pub fn send_text_frame(
   )
 }
 
-/// WebSocket close codes that can be sent when closing a connection. The `data` 
-/// parameter allows you to include payload up to 123 bytes in size. 
-/// 
+/// WebSocket close codes that can be sent when closing a connection. The `data`
+/// parameter allows you to include payload up to 123 bytes in size.
+///
 pub type CloseCode {
-  /// Standard graceful shutdown (1000). Use when connection completed 
+  /// Standard graceful shutdown (1000). Use when connection completed
   /// successfully.
-  /// 
+  ///
   NormalClosure(data: String)
-  /// Invalid message format (1007). Received payload that doesn't match what 
+  /// Invalid message format (1007). Received payload that doesn't match what
   /// you expected.
-  /// 
+  ///
   InvalidPayloadData(data: String)
   /// Application policy violation (1008).Client broke your rules - failed
   /// authentication, hit rate limits, or violated business logic.
-  /// 
+  ///
   PolicyViolation(data: String)
-  /// Message exceeds size limits (1009). Client sent something bigger than 
+  /// Message exceeds size limits (1009). Client sent something bigger than
   /// your application allows.
-  /// 
+  ///
   MessageTooBig(data: String)
-  /// Server encountered unexpected error (1011). Something went wrong on your 
+  /// Server encountered unexpected error (1011). Something went wrong on your
   /// side that prevents handling the connection.
-  /// 
+  ///
   InternalError(data: String)
-  /// Server is restarting (1012). Planned restart - clients can reconnect 
+  /// Server is restarting (1012). Planned restart - clients can reconnect
   /// after a bit.
-  /// 
+  ///
   ServiceRestart(data: String)
-  /// Temporary server overload (1013). Use when server is temporarily 
+  /// Temporary server overload (1013). Use when server is temporarily
   /// unavailable, client should retry.
-  /// 
+  ///
   TryAgainLater(data: String)
-  /// Gateway/proxy received invalid response (1014). You're acting as a proxy 
+  /// Gateway/proxy received invalid response (1014). You're acting as a proxy
   /// and the upstream server gave you garbage.
-  /// 
+  ///
   BadGateway(data: String)
   /// Custom close codes 3000-4999 for application-specific use.
-  /// 
+  ///
   CustomCloseCode(code: Int, data: String)
   /// Close without a specific reason.
-  /// 
+  ///
   NoCloseReason
 }
 
@@ -1120,7 +1118,7 @@ fn to_internal_sse_next(next: SSENext(user_state)) -> sse.SSENext(user_state) {
 /// - `id`: event ID.
 /// - `retry`: The reconnection time. If the connection to the server is lost,
 /// the browser will wait for the specified time before attempting to reconnect.
-/// 
+///
 /// Can be created using `ewe.event` and modified with `ewe.event_name`,
 /// `ewe.event_id`, and `ewe.event_retry`.
 ///
@@ -1160,7 +1158,7 @@ pub fn event_retry(event: SSEEvent, retry: Int) -> SSEEvent {
 ///
 /// `handler` function is called for every subject's message received. It must
 /// return instruction on how SSE connection should proceed.
-/// 
+///
 /// `on_close` function is called when SSE process is going to be stopped.
 ///
 pub fn sse(

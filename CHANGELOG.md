@@ -2,8 +2,10 @@
 
 # Unreleased
 
+- Bump dependency package versions
 - Move examples to appropriate folder
 - Improve examples with useful documentation lines
+- Replace active socket tcp message decoding for WebSocket selector
 
 # v2.1.2 - 19.11.2025
 

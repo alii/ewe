@@ -17,3 +17,6 @@ autobahn_docker:
   --network host \
   crossbario/autobahn-testsuite \
   wstest -m fuzzingclient -s /autobahn.json
+
+autobahn_serve:
+	cd "${PWD}/autobahn" && bun run serve.ts

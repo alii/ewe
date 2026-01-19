@@ -1,7 +1,13 @@
 -module(ewe_ffi).
 
 -export([close_file/1, decode_packet/3, init_clock_storage/0, lookup_http_date/0, now/0,
-         now_microseconds/0, open_file/1, rescue/1, set_http_date/1, validate_field_value/1]).
+         now_microseconds/0, open_file/1, set_http_date/1, validate_field_value/1, coerce_tcp_message/1]).
+
+% Socket
+% -----------------------------------------------------------------------------
+
+coerce_tcp_message({tcp, _Socket, Data}) -> Data;
+coerce_tcp_message({ssl, _Socket, Data}) -> Data.
 
 % HTTP
 % -----------------------------------------------------------------------------
@@ -109,19 +115,4 @@ close_file(File) ->
       {error, enoent};
     {error, _} ->
       {error, eunknown}
-  end.
-
-% RESCUING
-% -----------------------------------------------------------------------------
-
-rescue(Callable) ->
-  try
-    {ok, Callable()}
-  catch
-    error:Error ->
-      {error, {errored, Error}};
-    Error ->
-      {error, {thrown, Error}};
-    exit:Error ->
-      {error, {exited, Error}}
   end.

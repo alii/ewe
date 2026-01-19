@@ -1,7 +1,7 @@
 import exception
 import gleam/bit_array
 import gleam/bytes_tree
-import gleam/dynamic/decode
+import gleam/dynamic
 import gleam/erlang/atom
 import gleam/erlang/process.{type Selector, type Subject}
 import gleam/option.{type Option, None, Some}
@@ -39,19 +39,19 @@ pub type WebsocketNext(user_state, user_message) {
   AbnormalStop(reason: String)
 }
 
-/// Internal state maintained by the WebSocket actor.
-/// 
+// Internal state maintained by the WebSocket actor.
+// 
 type WebsocketState(user_state) {
   WebsocketState(user_state: user_state, context: websocks.Context)
 }
 
-/// Type alias for actor next steps.
-/// 
+// Type alias for actor next steps.
+// 
 type ActorNext(user_state, user_message) =
   actor.Next(WebsocketState(user_state), InternalMessage(user_message))
 
-/// Internal messages used by the WebSocket actor.
-/// 
+// Internal messages used by the WebSocket actor.
+//
 type InternalMessage(user_message) {
   Packet(BitArray)
   Close
@@ -60,41 +60,41 @@ type InternalMessage(user_message) {
   Invalid
 }
 
-/// Function called when the WebSocket connection is initialized.
-/// 
+// Function called when the WebSocket connection is initialized.
+//
 type OnInit(user_state, user_message) =
   fn(WebsocketConnection, Selector(user_message)) ->
     #(user_state, Selector(user_message))
 
-/// Function called to handle incoming WebSocket messages.
-/// 
+// Function called to handle incoming WebSocket messages.
+//
 type Handler(user_state, user_message) =
   fn(WebsocketConnection, user_state, WebsocketMessage(user_message)) ->
     WebsocketNext(user_state, user_message)
 
-/// Function called when the WebSocket connection is closed.
-/// 
+// Function called when the WebSocket connection is closed.
+//
 type OnClose(user_state) =
   fn(WebsocketConnection, user_state) -> Nil
 
-/// Error message for malformed messages.
-/// 
+// Error message for malformed messages.
+//
 const malformed = "Received malformed message"
 
-/// Error message for crashed WebSocket handler.
-/// 
+// Error message for crashed WebSocket handler.
+//
 const crashed = "Crash in websocket handler"
 
-/// Error message for failed PONG frame.
-/// 
+// Error message for failed PONG frame.
+//
 const failed_pong = "Failed to send PONG frame"
 
-/// Error message for sending WebSocket message from non-owning process.
-/// 
+// Error message for sending WebSocket message from non-owning process.
+//
 const non_owning_process = "Sending WebSocket message from non-owning process"
 
-/// Active count for socket.
-/// 
+// Active count for socket.
+//
 const socket_active_count = 100
 
 /// Starts a new WebSocket connection.
@@ -164,34 +164,26 @@ pub fn start(
   |> result.map(after_start(_, transport, socket))
 }
 
-/// Creates a selector for valid TCP/SSL records.
-/// 
-fn select_valid_record(
-  selector: Selector(InternalMessage(user_message)),
-  binary_atom: String,
-) -> Selector(InternalMessage(user_message)) {
-  process.select_record(selector, atom.create(binary_atom), 2, fn(record) {
-    decode.run(record, {
-      use data <- decode.field(2, decode.bit_array)
-      decode.success(Packet(data))
-    })
-    |> result.unwrap(Invalid)
-  })
-}
-
-/// Creates selector for glisten socket events.
-/// 
+// Creates selector for glisten socket events.
+// 
 fn create_socket_selector() -> Selector(InternalMessage(user_message)) {
   process.new_selector()
-  |> select_valid_record("tcp")
-  |> select_valid_record("ssl")
+  |> process.select_record(atom.create("tcp"), 2, fn(record) {
+    Packet(coerce_tcp_message(record))
+  })
+  |> process.select_record(atom.create("tcp"), 2, fn(record) {
+    Packet(coerce_tcp_message(record))
+  })
   |> process.select_record(atom.create("tcp_closed"), 1, fn(_) { Close })
   |> process.select_record(atom.create("ssl_closed"), 1, fn(_) { Close })
   |> process.select_record(atom.create("tcp_passive"), 1, fn(_) { TcpPassive })
 }
 
-/// Handles incoming packet data, decoding frames and processing them.
-/// 
+@external(erlang, "ewe_ffi", "coerce_tcp_message")
+fn coerce_tcp_message(record: dynamic.Dynamic) -> BitArray
+
+// Handles incoming packet data, decoding frames and processing them.
+// 
 fn handle_valid_packet(
   transport: Transport,
   socket: Socket,
@@ -201,7 +193,7 @@ fn handle_valid_packet(
   on_close: OnClose(user_state),
 ) -> ActorNext(user_state, user_message) {
   let conn = WebsocketConnection(transport, socket, state.context)
-  let result =
+  let processed =
     websocks.process_incoming_frames(
       data,
       state.context,
@@ -214,7 +206,7 @@ fn handle_valid_packet(
       handle_frame,
     )
 
-  case result {
+  case processed {
     Ok(#(resolved_state, context)) -> {
       case resolved_state.next {
         Continue(user_state, selector) -> {
@@ -230,15 +222,12 @@ fn handle_valid_packet(
           handle_close(on_close, state, conn, Some(reason))
       }
     }
-    Error(_violation) -> {
-      // echo violation as "violation during frame resolving"
-      handle_close(on_close, state, conn, Some(malformed))
-    }
+    Error(_violation) -> handle_close(on_close, state, conn, Some(malformed))
   }
 }
 
-/// Represents the state of the WebSocket connection when resolving frames.
-/// 
+// Represents the state of the WebSocket connection when resolving frames.
+// 
 type ResolveState(user_state, user_message) {
   ResolveState(
     socket: Socket,
@@ -286,6 +275,7 @@ fn handle_frame(
         }
       }
     }
+
     websocks.Control(websocks.Close(reason)) -> {
       let _ =
         transport.send(
@@ -309,7 +299,7 @@ fn handle_frame(
       case call {
         Ok(Continue(user_state, new_selector)) -> {
           let next_selector =
-            user_selector(new_selector)
+            option.map(new_selector, process.map_selector(_, User))
             |> option.or(selector)
             |> option.map(process.merge_selector(create_socket_selector(), _))
 
@@ -327,8 +317,8 @@ fn handle_frame(
   }
 }
 
-/// Handles user messages sent to the WebSocket.
-/// 
+// Handles user messages sent to the WebSocket.
+// 
 fn handle_user_message(
   transport: Transport,
   socket: Socket,
@@ -346,7 +336,7 @@ fn handle_user_message(
   case call {
     Ok(Continue(new_user_state, new_selector)) -> {
       let next_selector =
-        user_selector(new_selector)
+        option.map(new_selector, process.map_selector(_, User))
         |> option.map(process.merge_selector(create_socket_selector(), _))
 
       let next =
@@ -364,16 +354,8 @@ fn handle_user_message(
   }
 }
 
-/// Maps user selector to internal message.
-/// 
-fn user_selector(
-  selector: Option(Selector(user_message)),
-) -> Option(Selector(InternalMessage(user_message))) {
-  option.map(selector, fn(selector) { process.map_selector(selector, User) })
-}
-
-/// Handles WebSocket connection closure.
-/// 
+// Handles WebSocket connection closure.
+// 
 fn handle_close(
   on_close: OnClose(user_state),
   state: WebsocketState(user_state),
@@ -395,8 +377,8 @@ fn handle_close(
   }
 }
 
-/// Maps actor's starting value to Nil.
-/// 
+// Maps actor's starting value to Nil.
+// 
 fn after_start(
   started: actor.Started(Subject(InternalMessage(user_message))),
   transport: Transport,
