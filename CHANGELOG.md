@@ -1,6 +1,6 @@
 # Changelog
 
-# Unreleased
+# v 2.1.3 - 19.01.2026
 
 - Bump dependency package versions
 - Move examples to appropriate folder
