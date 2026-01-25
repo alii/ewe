@@ -1,5 +1,5 @@
 name = "ewe"
-version = "2.1.3"
+version = "3.0.0"
 
 description = "🐑 a fluffy Gleam web server"
 target = "erlang"
@@ -7,7 +7,6 @@ licences = ["Apache-2.0"]
 repository = { type = "github", user = "vshakitskiy", repo = "ewe" }
 links = [
   { title = "Gleam", href = "https://gleam.run" },
-  { title = "Mist", href = "https://github.com/rawhat/mist" },
 ]
 
 [dependencies]

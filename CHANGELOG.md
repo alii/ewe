@@ -1,6 +1,6 @@
 # Changelog
 
-# Unreleased
+# v3.0.0 - 25.01.2026
 
 - Fix bug where WebSocket was unusable with TLS enabled
 - Remove `bind_all`
