@@ -1,5 +1,9 @@
 # Changelog
 
+# v3.0.1 - 25.01.2026
+
+- Fix README file
+
 # v3.0.0 - 25.01.2026
 
 - Fix bug where WebSocket was unusable with TLS enabled

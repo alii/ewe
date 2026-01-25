@@ -10,7 +10,7 @@ ewe [/juː/] - fluffy package for building web servers.
 ## Installation
 
 ```sh
-gleam add ewe@2 gleam_erlang gleam_otp gleam_http logging
+gleam add ewe@3 gleam_erlang gleam_otp gleam_http logging
 ```
 
 ## Getting Started
@@ -28,7 +28,7 @@ pub fn main() {
 
   let assert Ok(_) =
     ewe.new(handler)
-    |> ewe.bind_all
+    |> ewe.bind("0.0.0.0")
     |> ewe.listening(port: 8080)
     |> ewe.start
 
