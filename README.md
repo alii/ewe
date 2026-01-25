@@ -44,6 +44,21 @@ fn handler(_req: Request) -> Response {
 
 ## Usage
 
+### [HTTPS](examples/src/https.gleam)
+
+To enable HTTPS support via TLS, use [`ewe.enable_tls`](https://hexdocs.pm/ewe/ewe.html#enable_tls) with paths to your certificate and key files. The server validates the certificate and key files on startup and will crash if they're missing or invalid.
+
+```gleam
+ewe.new(handler)
+|> ewe.bind("0.0.0.0")
+|> ewe.listening(port: 8080)
+|> ewe.enable_tls(
+  certificate_file: "priv/localhost.crt",
+  key_file: "priv/localhost.key",
+)
+|> ewe.start
+```
+
 ### [Sending Response](examples/src/sending_response.gleam)
 
 `ewe` provides several response body types (see [`ewe.ResponseBody`](https://hexdocs.pm/ewe/ewe.html#ResponseBody) type). Request handler must return [`response.Response`](https://hexdocs.pm/gleam_http/gleam/http/response.html#Response) type with [`ewe.ResponseBody`](https://hexdocs.pm/ewe/ewe.html#ResponseBody). You can also use [`ewe.Request`](https://hexdocs.pm/ewe/ewe.html#Request)/[`ewe.Response`](https://hexdocs.pm/ewe/ewe.html#Response) as they are aliases for `request.Request(Connection)`(see [`request.Request`](https://hexdocs.pm/gleam_http/gleam/http/request.html#Request) & [`ewe.Connection`](https://hexdocs.pm/ewe/ewe.html#Connection))/`response.Response(ResponseBody)`.
