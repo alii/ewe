@@ -30,7 +30,7 @@ pub fn main() -> Nil {
     |> supervisor.add(
       ewe.new(handler(_, pubsub))
       |> ewe.listening(port: 8080)
-      |> ewe.bind_all
+      |> ewe.bind("0.0.0.0")
       // Use ewe.supervised instead of ewe.start to run under supervision.
       //
       |> ewe.supervised,

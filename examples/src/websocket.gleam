@@ -30,7 +30,7 @@ pub fn main() {
     |> supervisor.add(pubsub_worker(pubsub_name))
     |> supervisor.add(
       ewe.new(handler(_, pubsub))
-      |> ewe.bind_all
+      |> ewe.bind("0.0.0.0")
       |> ewe.listening(port: 8080)
       |> ewe.supervised,
     )

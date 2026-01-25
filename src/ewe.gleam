@@ -16,7 +16,6 @@
 ////     functions: [
 ////       "new",
 ////       "bind",
-////       "bind_all",
 ////       "listening",
 ////       "listening_random",
 ////       "enable_ipv6",
@@ -167,25 +166,21 @@ import websocks
 // CONNECTION
 // -----------------------------------------------------------------------------
 
-/// Represents a default body stored inside a `Request` type. Contains
-/// important information for retrieving the original request body or client's
-/// information. Can be converted to a `BitArray` using `ewe.read_body`.
-///
+/// Represents the request body and connection metadata. Access the body using
+/// `ewe.read_body`, or retrieve client information with `ewe.get_client_info`.
 pub type Connection =
   ewe_http.Connection
 
 // IP ADDRESS
 // -----------------------------------------------------------------------------
 
-/// Represents an IP address of a client/server.
-///
+/// Represents an IP address. Can be either IPv4 or IPv6.
 pub type IpAddress {
   IpV4(Int, Int, Int, Int)
   IpV6(Int, Int, Int, Int, Int, Int, Int, Int)
 }
 
-/// Converts an `IpAddress` to a `String`.
-///
+/// Converts an `IpAddress` to its string representation.
 pub fn ip_address_to_string(address address: IpAddress) -> String {
   ewe_to_glisten_ip(address)
   |> glisten.ip_address_to_string
@@ -218,16 +213,15 @@ fn ewe_to_glisten_ip(ip: IpAddress) -> glisten.IpAddress {
 // INFORMATION
 // -----------------------------------------------------------------------------
 
-/// Represents client/server information. Can be retrieved using
-/// `ewe.get_client_info`/`ewe.get_server_info`.
-///
+/// Represents a socket address with IP and port. Use `ewe.get_lcient_info` to
+/// get the client's address from a connection, or `ewe.get_server_info` to get
+/// the server's bound address.
 pub type SocketAddress {
   SocketAddress(ip: IpAddress, port: Int)
 }
 
-/// Attempts to get the client's socket address using request's
-/// connection.
-///
+/// Retrieves the client's socket address from the connection. Returns error if
+/// the socket information is unavailable.
 pub fn get_client_info(
   connection connection: Connection,
 ) -> Result(SocketAddress, Nil) {
@@ -237,9 +231,8 @@ pub fn get_client_info(
   })
 }
 
-/// Retrieves server's socket address. Requires the same name as the one used in
-/// `ewe.with_name` and server to be started.
-///
+/// Gets the server's bound address and port. Requires the server to be running
+/// and the listener name to match the one set in `ewe.with_name`.
 pub fn get_server_info(
   listener_name name: process.Name(listener.Message),
 ) -> SocketAddress {
@@ -256,50 +249,39 @@ pub fn get_server_info(
 ///
 /// Types for direct usage:
 /// - Regular data: `TextData`, `BytesData`, `BitsData`, `StringTreeData`,
-///   `Empty`
-/// - Chunked data: `ChunkedData`
+/// `Empty`.
 ///
-/// Types that should not be used directly:
+/// Types that should never be used directly:
 /// - `File`: see `ewe.file` to construct it.
-/// - `ChunkedData`: indicates that response body is being sent in chunks with
+/// - `Chunked`: indicates that response body is being sent in chunks with
 /// `chunked` transfer encoding.
 /// - `Websocket`: indicates that request is being upgraded to a WebSocket
 /// connection.
 /// - `SSE`: indicates that request is being upgraded to a Server-Sent Events
 /// connection.
-///
 pub type ResponseBody {
   /// Allows to set response body from a string.
-  ///
   TextData(String)
   /// Allows to set response body from bytes.
-  ///
   BytesData(BytesTree)
   /// Allows to set response body from bits.
-  ///
   BitsData(BitArray)
   /// Allows to set response body from a string tree.
-  ///
   StringTreeData(StringTree)
   /// Allows to set empty response body.
-  ///
   Empty
 
   /// Allows to set response body from a file more efficiently rather than
   /// sending contents in regular data types.
-  ///
   File(descriptor: file.IoDevice, offset: Int, size: Int)
 
   /// Indicates that response body is being sent in chunks with `chunked`
   /// transfer encoding.
-  ///
   Chunked
   /// Indicates that request is being upgraded to a WebSocket connection.
-  ///
   Websocket
   /// Indicates that request is being upgraded to a Server-Sent Events
   /// connection.
-  ///
   SSE
 }
 
@@ -327,21 +309,16 @@ fn transform_response_body(
   })
 }
 
-/// Possible errors that can occur when setting response body from a file.
-///
+/// Error type returned by `ewe.file` when opening a file for the response body.
 pub type FileError {
   /// File does not exist.
-  ///
   NoEntry
   /// Missing permission for reading the file, or for searching one of the
   /// parents directories.
-  ///
   NoAccess
   /// The named file is a directory.
-  ///
   IsDirectory
   /// Untypical file error.
-  ///
   UnknownFileError(dynamic.Dynamic)
 }
 
@@ -354,8 +331,8 @@ fn internal_to_file_error(error: file.FileError) -> FileError {
   }
 }
 
-/// Sets response body from file, sets `content-length` header.
-///
+/// Creates a file response body. Use `offset` to skip bytes from the start, and
+/// `limit` to send only a portion of the file.
 pub fn file(
   path: String,
   offset offset: Option(Int),
@@ -376,20 +353,8 @@ pub fn file(
 // BUILDER
 // -----------------------------------------------------------------------------
 
-/// Ewe's server builder. Contains all server configurations. Can be adjusted
-/// with the following functions:
-/// - `ewe.bind`
-/// - `ewe.bind_all`
-/// - `ewe.listening`
-/// - `ewe.listening_random`
-/// - `ewe.enable_ipv6`
-/// - `ewe.enable_tls`
-/// - `ewe.with_name`
-/// - `ewe.on_start`
-/// - `ewe.quiet`
-/// - `ewe.on_crash`
-/// - `ewe.idle_timeout`
-///
+/// Contains all server configurations, can be adjusted by different builder
+/// functions.
 pub opaque type Builder {
   Builder(
     handler: fn(Request) -> Response,
@@ -405,17 +370,6 @@ pub opaque type Builder {
 }
 
 /// Creates new server builder with handler provided.
-///
-/// Default configuration:
-/// - port: `8080`
-/// - interface: `127.0.0.1`
-/// - No ipv6 support
-/// - No TLS support
-/// - Default listener name for server information retrieval
-/// - on_start: logs `Listening on <scheme>://<ip_address>:<port>`
-/// - on_crash: empty 500 response
-/// - idle_timeout: connection is closed after 10_000ms of inactivity
-///
 pub fn new(handler: fn(Request) -> Response) -> Builder {
   Builder(
     handler:,
@@ -444,60 +398,43 @@ pub fn new(handler: fn(Request) -> Response) -> Builder {
   )
 }
 
-/// Binds server to a specific interface. Crashes program if the interface is
-/// invalid.
-///
+/// Binds server to a specific network interface (e.g., "0.0.0.0" for all IPv4
+/// interfaces or "127.0.0.1" for localhost). To bind to IPv6 addresses like
+/// "::" or "::1", you must use `ewe.enable_ipv6`. Crashes the program if the
+/// interface is invalid.
 pub fn bind(builder: Builder, interface interface: String) -> Builder {
   Builder(..builder, interface:)
 }
 
-/// Binds server to all interfaces.
-///
-pub fn bind_all(builder: Builder) -> Builder {
-  Builder(..builder, interface: "0.0.0.0")
-}
-
-/// Sets listening port for server.
-///
+/// Sets the listening port for server.
 pub fn listening(builder: Builder, port port: Int) -> Builder {
   Builder(..builder, port:)
 }
 
-/// Sets listening port for server to a random port. Useful for testing.
-///
+/// Sets the listening port to 0, which causes the OS to assign a random
+/// available port.
 pub fn listening_random(builder: Builder) -> Builder {
   Builder(..builder, port: 0)
 }
 
-/// Enables IPv6 support.
-///
+/// Enables IPv6 support, allowing the server to accept connections over IPv6
+/// addresses. Must be called for binding to IPv6 addresses via `ewe.bind`.
 pub fn enable_ipv6(builder: Builder) -> Builder {
   Builder(..builder, ipv6: True)
 }
 
-/// Enables TLS support, requires certificate and key file.
-///
+/// Enables TLS (HTTPS) support, with provided certificate and key files. 
+/// Crashes the program if the files don't exist or are invalid.
 pub fn enable_tls(
   builder: Builder,
   certificate_file certificate_file: String,
   key_file key_file: String,
 ) -> Builder {
-  let cert = case file.open(certificate_file) {
-    Ok(_) -> certificate_file
-    Error(_) -> panic as "Failed to find cert file"
-  }
-
-  let key = case file.open(key_file) {
-    Ok(_) -> key_file
-    Error(_) -> panic as "Failed to find key file"
-  }
-
-  Builder(..builder, tls: Some(#(cert, key)))
+  Builder(..builder, tls: Some(#(certificate_file, key_file)))
 }
 
-/// Sets a custom process name for server information retrieval, allowing to
-/// use `ewe.get_server_info` after the server starts.
-///
+/// Sets a custom listener process name. This name is required when calling
+/// `ewe.get_server_info` to retrieve the server's bound address and port.
 pub fn with_name(
   builder: Builder,
   name: process.Name(listener.Message),
@@ -505,8 +442,8 @@ pub fn with_name(
   Builder(..builder, listener_name: name)
 }
 
-/// Sets a custom handler that will be called after server starts.
-///
+/// Sets a callback function called after the server starts. Receives the scheme
+/// and server's socket address.
 pub fn on_start(
   builder: Builder,
   on_start: fn(http.Scheme, SocketAddress) -> Nil,
@@ -515,20 +452,17 @@ pub fn on_start(
 }
 
 /// Sets an empty `on_start` function.
-///
 pub fn quiet(builder: Builder) -> Builder {
   Builder(..builder, on_start: fn(_, _) { Nil })
 }
 
 /// Sets a custom response that will be sent when server crashes.
-///
 pub fn on_crash(builder: Builder, on_crash: Response) -> Builder {
   Builder(..builder, on_crash:)
 }
 
-/// Sets a custom idle timeout in milliseconds for connections. If
-/// provided timeout is less than 0, 10_000ms will be used instead.
-///
+/// Sets the idle timeout in milliseconds. Connections are closed after this
+/// period of inactivity. Defaults to 10_000ms if the value is negative.
 pub fn idle_timeout(builder: Builder, idle_timeout: Int) -> Builder {
   case idle_timeout {
     idle_timeout if idle_timeout >= 0 -> Builder(..builder, idle_timeout:)
@@ -540,7 +474,6 @@ pub fn idle_timeout(builder: Builder, idle_timeout: Int) -> Builder {
 // -----------------------------------------------------------------------------
 
 /// Starts the server with the provided configuration.
-///
 pub fn start(
   builder: Builder,
 ) -> Result(actor.Started(Supervisor), actor.StartError) {
@@ -598,9 +531,7 @@ pub fn start(
   |> supervisor.start()
 }
 
-/// Creates a supervisor with the provided configuration that is a child of a
-/// supervision tree.
-///
+/// Returns a child specification for use in a supervision tree.
 pub fn supervised(
   builder: Builder,
 ) -> supervision.ChildSpecification(supervisor.Supervisor) {
@@ -611,29 +542,20 @@ pub fn supervised(
 // -----------------------------------------------------------------------------
 
 /// Possible errors that can occur when reading a body.
-///
 pub type BodyError {
   /// Body is larger than the provided limit.
-  ///
   BodyTooLarge
   /// Body is malformed.
-  ///
   InvalidBody
 }
 
 /// A convenient alias for a HTTP request with a `Connection` as the body.
-///
 pub type Request =
   HttpRequest(Connection)
 
-/// Reads body from the request. If request body is malformed, `InvalidBody`
-/// error is returned. On success, returns a request with body converted to
-/// `BitArray`.
-///
-/// - When `transfer-encoding` header set as `chunked`, `BodyTooLarge` error is
-/// returned if accumulated body is larger than `size_limit`.
-/// - Ensures that `content-length` is in `size_limit` scope.
-///
+/// Reads body from the request. Returns `BodyTooLarge` if body exceeds 
+/// `bytes_limit`, or `InvalidBody` if malformed. Supports both chunked and 
+/// content-length bodies.
 pub fn read_body(
   req: Request,
   bytes_limit bytes_limit: Int,
@@ -647,24 +569,18 @@ pub fn read_body(
 
 /// A convenient alias for a consumer that reads `N` amount of bytes from the
 /// request body stream.
-///
 pub type Consumer =
   fn(Int) -> Result(Stream, BodyError)
 
-/// Used to track the progress of reading the request body stream.
-///
+/// The progress of reading the request body stream.
 pub type Stream {
   /// Chunk of data has been consumed.
-  ///
   Consumed(data: BitArray, next: Consumer)
   /// Signifies that the request body stream has been fully consumed.
-  ///
   Done
 }
 
-/// Returns the consumer function that reads `N` amount of bytes from the
-/// request body stream.
-///
+/// Returns a consumer for streaming the request body in chunks.
 pub fn stream_body(req: Request) -> Result(Consumer, BodyError) {
   case ewe_http.stream_body(req) {
     Ok(consumer) -> Ok(consumer_adapter(consumer))
@@ -691,7 +607,6 @@ fn consumer_adapter(
 
 /// Represents a chunked response body. This type is used to send a chunked
 /// response to the client.
-///
 pub type ChunkedBody =
   chunked.ChunkedBody
 
@@ -700,7 +615,6 @@ pub type ChunkedBody =
 /// - continue processing the chunked response.
 /// - stop the chunked response normally.
 /// - stop the chunked response with abnormal reason.
-///
 pub opaque type ChunkedNext(user_state) {
   ChunkedContinue(user_state)
   ChunkedStop
@@ -708,19 +622,16 @@ pub opaque type ChunkedNext(user_state) {
 }
 
 /// Instructs chunked response to continue processing.
-///
 pub fn chunked_continue(user_state: user_state) -> ChunkedNext(user_state) {
   ChunkedContinue(user_state)
 }
 
 /// Instructs chunked response to stop normally.
-///
 pub fn chunked_stop() -> ChunkedNext(user_state) {
   ChunkedStop
 }
 
 /// Instructs chunked response to stop with abnormal reason.
-///
 pub fn chunked_stop_abnormal(reason: String) -> ChunkedNext(user_state) {
   ChunkedAbnormalStop(reason)
 }
@@ -745,7 +656,6 @@ fn to_internal_chunked_next(
 /// instruction on how chunked response should proceed.
 ///
 /// `on_close` function is called when the chunked response process is going to be stopped.
-///
 pub fn chunked_body(
   req: Request,
   resp: HttpResponse(a),
@@ -785,7 +695,6 @@ pub fn chunked_body(
 }
 
 /// Sends a chunk to the client.
-///
 pub fn send_chunk(
   body: ChunkedBody,
   chunk: BitArray,
@@ -797,7 +706,6 @@ pub fn send_chunk(
 // -----------------------------------------------------------------------------
 
 /// Represents a WebSocket connection between a client and a server.
-///
 pub type WebsocketConnection =
   websocket.WebsocketConnection
 
@@ -808,7 +716,6 @@ pub type WebsocketConnection =
 ///   messages.
 /// - stop the WebSocket connection.
 /// - stop the WebSocket connection with abnormal reason.
-///
 pub opaque type WebsocketNext(user_state, user_message) {
   WebsocketContinue(user_state, Option(Selector(user_message)))
   WebsocketNormalStop
@@ -816,7 +723,6 @@ pub opaque type WebsocketNext(user_state, user_message) {
 }
 
 /// Instructs WebSocket connection to continue processing.
-///
 pub fn websocket_continue(
   user_state: user_state,
 ) -> WebsocketNext(user_state, user_message) {
@@ -825,7 +731,6 @@ pub fn websocket_continue(
 
 /// Instructs WebSocket connection to continue processing, including selector
 /// for custom messages.
-///
 pub fn websocket_continue_with_selector(
   user_state: user_state,
   selector: Selector(user_message),
@@ -834,13 +739,11 @@ pub fn websocket_continue_with_selector(
 }
 
 /// Instructs WebSocket connection to stop.
-///
 pub fn websocket_stop() -> WebsocketNext(user_state, user_message) {
   WebsocketNormalStop
 }
 
 /// Instructs WebSocket connection to stop with abnormal reason.
-///
 pub fn websocket_stop_abnormal(
   reason: String,
 ) -> WebsocketNext(user_state, user_message) {
@@ -870,16 +773,12 @@ fn to_internal_websocket_next(
 }
 
 /// Represents a WebSocket message received from the client.
-///
 pub type WebsocketMessage(user_message) {
   /// Indicate that text frame has been received.
-  ///
   Text(String)
   /// Indicate that binary frame has been received.
-  ///
   Binary(BitArray)
   /// Indicate that user message has been received from WebSocket selector.
-  ///
   User(user_message)
 }
 
@@ -907,7 +806,6 @@ fn transform_websocket_message(
 /// return instruction on how WebSocket connection should proceed.
 ///
 /// `on_close` function is called when WebSocket process is going to be stopped.
-///
 pub fn upgrade_websocket(
   req: Request,
   on_init on_init: fn(WebsocketConnection, Selector(user_message)) ->
@@ -961,7 +859,6 @@ pub fn upgrade_websocket(
 }
 
 /// Sends a binary frame to the websocket client.
-///
 pub fn send_binary_frame(
   conn: WebsocketConnection,
   bits: BitArray,
@@ -976,7 +873,6 @@ pub fn send_binary_frame(
 }
 
 /// Sends a text frame to the websocket client.
-///
 pub fn send_text_frame(
   conn: WebsocketConnection,
   text: String,
@@ -992,45 +888,34 @@ pub fn send_text_frame(
 
 /// WebSocket close codes that can be sent when closing a connection. The `data`
 /// parameter allows you to include payload up to 123 bytes in size.
-///
 pub type CloseCode {
   /// Standard graceful shutdown (1000). Use when connection completed
   /// successfully.
-  ///
   NormalClosure(data: String)
   /// Invalid message format (1007). Received payload that doesn't match what
   /// you expected.
-  ///
   InvalidPayloadData(data: String)
   /// Application policy violation (1008).Client broke your rules - failed
   /// authentication, hit rate limits, or violated business logic.
-  ///
   PolicyViolation(data: String)
   /// Message exceeds size limits (1009). Client sent something bigger than
   /// your application allows.
-  ///
   MessageTooBig(data: String)
   /// Server encountered unexpected error (1011). Something went wrong on your
   /// side that prevents handling the connection.
-  ///
   InternalError(data: String)
   /// Server is restarting (1012). Planned restart - clients can reconnect
   /// after a bit.
-  ///
   ServiceRestart(data: String)
   /// Temporary server overload (1013). Use when server is temporarily
   /// unavailable, client should retry.
-  ///
   TryAgainLater(data: String)
   /// Gateway/proxy received invalid response (1014). You're acting as a proxy
   /// and the upstream server gave you garbage.
-  ///
   BadGateway(data: String)
   /// Custom close codes 3000-4999 for application-specific use.
-  ///
   CustomCloseCode(code: Int, data: String)
   /// Close without a specific reason.
-  ///
   NoCloseReason
 }
 
@@ -1055,7 +940,6 @@ fn to_internal_close_code(code: CloseCode) -> websocks.CloseReason {
 /// Sends a close frame to the websocket client. Once this function is called,
 /// no other frames can be sent on this connection. Returns how the WebSocket
 /// connection should proceed - make sure your handler returns this value.
-///
 pub fn send_close_frame(
   conn: WebsocketConnection,
   code: CloseCode,
@@ -1069,7 +953,6 @@ pub fn send_close_frame(
 // -----------------------------------------------------------------------------
 
 /// Represents a Server-Sent Events connection between a client and a server.
-///
 pub type SSEConnection =
   sse.SSEConnection
 
@@ -1079,7 +962,6 @@ pub type SSEConnection =
 /// - continue processing the Server-Sent Events connection.
 /// - stop the Server-Sent Events connection.
 /// - stop the Server-Sent Events connection with abnormal reason.
-///
 pub opaque type SSENext(user_state) {
   SSEContinue(user_state)
   SSENormalStop
@@ -1087,19 +969,16 @@ pub opaque type SSENext(user_state) {
 }
 
 /// Instructs Server-Sent Events connection to continue processing.
-///
 pub fn sse_continue(user_state: user_state) -> SSENext(user_state) {
   SSEContinue(user_state)
 }
 
 /// Instructs Server-Sent Events connection to stop.
-///
 pub fn sse_stop() -> SSENext(user_state) {
   SSENormalStop
 }
 
 /// Instructs Server-Sent Events connection to stop with abnormal reason.
-///
 pub fn sse_stop_abnormal(reason: String) -> SSENext(user_state) {
   SSEAbnormalStop(reason)
 }
@@ -1121,31 +1000,26 @@ fn to_internal_sse_next(next: SSENext(user_state)) -> sse.SSENext(user_state) {
 ///
 /// Can be created using `ewe.event` and modified with `ewe.event_name`,
 /// `ewe.event_id`, and `ewe.event_retry`.
-///
 pub type SSEEvent =
   sse.SSEEvent
 
 /// Creates a new SSE event with the given data. Use `ewe.event_name`,
 /// `ewe.event_id`, and `ewe.event_retry` to modify other fields of the event.
-///
 pub fn event(data: String) -> SSEEvent {
   sse.SSEEvent(event: None, data:, id: None, retry: None)
 }
 
 /// Sets the name of the event.
-///
 pub fn event_name(event: SSEEvent, name: String) -> SSEEvent {
   sse.SSEEvent(..event, event: Some(name))
 }
 
 /// Sets the ID of the event.
-///
 pub fn event_id(event: SSEEvent, id: String) -> SSEEvent {
   sse.SSEEvent(..event, id: Some(id))
 }
 
 /// Sets the retry time of the event.
-///
 pub fn event_retry(event: SSEEvent, retry: Int) -> SSEEvent {
   sse.SSEEvent(..event, retry: Some(retry))
 }
@@ -1160,7 +1034,6 @@ pub fn event_retry(event: SSEEvent, retry: Int) -> SSEEvent {
 /// return instruction on how SSE connection should proceed.
 ///
 /// `on_close` function is called when SSE process is going to be stopped.
-///
 pub fn sse(
   req: Request,
   on_init on_init: fn(Subject(user_message)) -> user_state,
@@ -1198,7 +1071,6 @@ pub fn sse(
 }
 
 /// Sends a Server-Sent Events event to the client.
-///
 pub fn send_event(
   conn: SSEConnection,
   event: SSEEvent,

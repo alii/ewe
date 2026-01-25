@@ -171,7 +171,7 @@ fn create_socket_selector() -> Selector(InternalMessage(user_message)) {
   |> process.select_record(atom.create("tcp"), 2, fn(record) {
     Packet(coerce_tcp_message(record))
   })
-  |> process.select_record(atom.create("tcp"), 2, fn(record) {
+  |> process.select_record(atom.create("ssl"), 2, fn(record) {
     Packet(coerce_tcp_message(record))
   })
   |> process.select_record(atom.create("tcp_closed"), 1, fn(_) { Close })

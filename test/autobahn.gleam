@@ -29,7 +29,7 @@ pub fn main() -> Nil {
       )
     })
     |> ewe.enable_ipv6()
-    |> ewe.bind_all()
+    |> ewe.bind("0.0.0.0")
     |> ewe.listening(port: 8081)
     |> ewe.supervised()
 

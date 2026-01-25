@@ -1,5 +1,11 @@
 # Changelog
 
+# Unreleased
+
+- Fix bug where WebSocket was unusable with TLS enabled
+- Remove `bind_all`
+- Adjust documentation
+
 # v2.1.3 - 19.01.2026
 
 - Bump dependency package versions
