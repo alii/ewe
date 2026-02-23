@@ -24,19 +24,19 @@ import glisten/transport
 import logging
 
 /// HTTP/1.1 handler state.
-/// 
+///
 pub type Http1Handler {
   Http1Handler(idle_timer: Option(process.Timer))
 }
 
 /// Initializes the HTTP/1.1 handler state.
-/// 
+///
 pub fn init() -> Http1Handler {
   Http1Handler(idle_timer: None)
 }
 
 /// Action to take after handling a packet.
-/// 
+///
 pub type Next {
   Continue(state: Http1Handler)
   Stop
@@ -44,14 +44,14 @@ pub type Next {
 }
 
 /// HTTP/2 upgrade options.
-/// 
+///
 pub type Http2Upgrade {
-  OverCleartext(request: Request(Connection), settings: String)
-  OverTLS(data: BitArray)
+  Upgrade(request: Request(Connection), settings: String)
+  Direct(data: BitArray)
 }
 
 /// Handles received glisten packet.
-/// 
+///
 pub fn handle_packet(
   state: Http1Handler,
   connection: Connection,
@@ -76,10 +76,25 @@ pub fn handle_packet(
         Error(Nil) -> Stop
       }
     }
-    Ok(ewe_http.Http2Upgrade(ewe_http.OverTLS(data))) ->
-      Http2Upgrade(OverTLS(data:))
-    Ok(ewe_http.Http2Upgrade(ewe_http.OverCleartext(request, settings))) ->
-      Http2Upgrade(OverCleartext(request:, settings:))
+    Ok(ewe_http.Http2Upgrade(ewe_http.Direct(data))) ->
+      Http2Upgrade(Direct(data:))
+    Ok(ewe_http.Http2Upgrade(ewe_http.Upgrade(request, _settings))) -> {
+      logging.log(logging.Notice, "HTTP/2 upgrade; using HTTP/1.1")
+      let call_result =
+        call(
+          request,
+          ewe_http.Http11,
+          glisten_subject,
+          handler,
+          on_crash,
+          idle_timeout,
+        )
+
+      case call_result {
+        Ok(state) -> Continue(state)
+        Error(Nil) -> Stop
+      }
+    }
     Error(reason) -> {
       let status = case reason {
         ewe_http.InvalidVersion -> 505
@@ -99,7 +114,7 @@ pub fn handle_packet(
 }
 
 /// Takes parsed HTTP request and calls the handler.
-/// 
+///
 fn call(
   request: Request(Connection),
   version: HttpVersion,
@@ -130,7 +145,7 @@ fn call(
 }
 
 /// Actions to take after response is sent.
-/// 
+///
 fn on_sent(
   sent: Result(Nil, glisten.SocketReason),
   response: Response(ResponseBody),
@@ -149,7 +164,7 @@ fn on_sent(
 }
 
 /// Sends a file to the client.
-/// 
+///
 fn send_file(
   request: Request(Connection),
   version: HttpVersion,
@@ -185,7 +200,7 @@ fn send_file(
 }
 
 /// Sends a body to the client.
-/// 
+///
 fn send_body(
   request: Request(Connection),
   version: HttpVersion,
@@ -236,7 +251,7 @@ fn send_body(
 }
 
 /// Can the body be encoded to gzip?
-/// 
+///
 fn can_encode_gzip(request: Request(Connection), response: Response(_)) -> Bool {
   let accept_encoding =
     request.get_header(request, "accept-encoding")
@@ -251,7 +266,7 @@ fn can_encode_gzip(request: Request(Connection), response: Response(_)) -> Bool 
 }
 
 /// Removes the charset from the content-type header.
-/// 
+///
 fn remove_charset(response: Response(_)) -> Response(_) {
   response.get_header(response, "content-type")
   |> result.try(string.split_once(_, ";"))
@@ -262,7 +277,7 @@ fn remove_charset(response: Response(_)) -> Response(_) {
 }
 
 /// Is the connection set to close?
-/// 
+///
 fn is_connection_close(response: Response(_)) -> Bool {
   case response.get_header(response, "connection") {
     Ok("close") -> True

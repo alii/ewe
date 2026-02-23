@@ -120,10 +120,10 @@ pub type ParsedRequest {
 }
 
 /// HTTP/2 upgrade options.
-/// 
+///
 pub type Http2Upgrade {
-  OverCleartext(req: Request(Connection), settings: String)
-  OverTLS(data: BitArray)
+  Upgrade(req: Request(Connection), settings: String)
+  Direct(data: BitArray)
 }
 
 /// Parses an HTTP request from the given buffer.
@@ -207,7 +207,7 @@ pub fn parse_request(
                 string.contains(string.lowercase(connection), "upgrade")
 
               case is_upgrade {
-                True -> Ok(Http2Upgrade(OverCleartext(req:, settings:)))
+                True -> Ok(Http2Upgrade(Upgrade(req:, settings:)))
                 False -> Ok(Http1Request(req:, version: Http11))
               }
             }
@@ -218,7 +218,7 @@ pub fn parse_request(
       }
     }
     Ok(Packet(decoder.Http2Upgrade, <<"\r\nSM\r\n\r\n":utf8, data:bits>>)) ->
-      Ok(Http2Upgrade(OverTLS(data:)))
+      Ok(Http2Upgrade(Direct(data:)))
     Ok(More(size)) -> {
       use new_buffer <- try(read_from_socket(
         transport,

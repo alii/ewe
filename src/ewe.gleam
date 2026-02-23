@@ -503,6 +503,8 @@ pub fn start(
     |> fn(glisten_builder) {
       case builder.tls {
         Some(#(cert, key)) -> glisten.with_tls(glisten_builder, cert, key)
+        // Uncomment once http2 will be implemented!
+        // |> glisten.with_http2
         None -> glisten_builder
       }
     }

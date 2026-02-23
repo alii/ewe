@@ -19,7 +19,7 @@ import ewe.{type Request, type Response}
 
 pub fn main() {
   logging.configure()
-  logging.set_level(logging.Info)
+  logging.set_level(logging.Debug)
 
   // Create a named subject for the pubsub worker
   let pubsub_name = process.new_name("pubsub")

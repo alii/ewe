@@ -13,8 +13,8 @@ pub fn main() {
     |> ewe.bind("0.0.0.0")
     |> ewe.listening(port: 8080)
     |> ewe.enable_tls(
-      certificate_file: "priv/localhost.crt",
-      key_file: "priv/localhost.key",
+      certificate_file: "examples/priv/localhost.crt",
+      key_file: "examples/priv/localhost.key",
     )
     |> ewe.start
 

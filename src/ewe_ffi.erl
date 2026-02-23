@@ -14,8 +14,8 @@ coerce_tcp_message({ssl, _Socket, Data}) -> Data.
 
 decode_packet(Type, Packet, Options) ->
   case erlang:decode_packet(Type, Packet, Options) of
-    {ok, {http_request, <<"PRI">>, "*", {2, 0}}, Rest} ->
-      {ok, {packet, {http2_upgrade, Rest}}};
+    {ok, {http_request, <<"PRI">>, '*', {2, 0}}, Rest} ->
+      {ok, {packet, http2_upgrade, Rest}};
     {ok, {http_request, Method, Uri, Version}, Rest} ->
       {ok, {packet, {http_request, atom_to_binary(Method), Uri, Version}, Rest}};
     {ok, {http_header, Idx, _, Field, Value}, Rest} ->
