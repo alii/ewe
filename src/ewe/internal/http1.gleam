@@ -1,4 +1,4 @@
-import ewe/internal/buffer.{type Buffer}
+import ewe/internal/http1/buffer.{type Buffer, Buffer}
 import ewe/internal/clock
 import ewe/internal/decoder.{
   AbsPath, HttpBin, HttpEoh, HttpHeader, HttpRequest, HttphBin, More, Packet,
@@ -54,7 +54,7 @@ pub fn transform_connection(
   Connection(
     transport: conn.transport,
     socket: conn.socket,
-    buffer: buffer.empty(),
+    buffer: Buffer(<<>>, 0),
     factory_name:,
   )
 }
@@ -67,16 +67,16 @@ fn read_from_socket(
   buffer buffer: Buffer,
   on_error on_error: ParseError,
 ) -> Result(Buffer, ParseError) {
-  let read_size = int.min(buffer.remaining, max_reading_size)
+  let read_size = int.min(buffer.pending, max_reading_size)
 
   use data <- try(
     transport.receive_timeout(transport, socket, read_size, 5000)
     |> replace_error(on_error),
   )
 
-  let new_buffer = buffer.append_size(buffer, data, read_size)
+  let new_buffer = buffer.append(buffer, data)
 
-  case new_buffer.remaining {
+  case new_buffer.pending {
     0 -> Ok(new_buffer)
     _ -> read_from_socket(transport:, socket:, buffer: new_buffer, on_error:)
   }
@@ -153,7 +153,7 @@ pub fn parse_request(
       use #(headers, rest) <- try(parse_headers(
         transport,
         socket,
-        buffer: buffer.new(rest),
+        buffer: Buffer(rest, 0),
         headers: dict.new(),
       ))
 
@@ -186,7 +186,7 @@ pub fn parse_request(
         Request(
           method:,
           headers: dict.to_list(headers),
-          body: Connection(..conn, buffer: buffer.new(rest)),
+          body: Connection(..conn, buffer: Buffer(rest, 0)),
           scheme:,
           host:,
           port:,
@@ -223,7 +223,7 @@ pub fn parse_request(
       use new_buffer <- try(read_from_socket(
         transport,
         socket,
-        buffer: buffer.sized(buffer, option.unwrap(size, 0)),
+        buffer: Buffer(buffer.data, option.unwrap(size, 0)),
         on_error: MalformedRequest,
       ))
 
@@ -257,7 +257,7 @@ fn parse_headers(
         validate_field_value(value) |> replace_error(InvalidHeaders),
       )
 
-      let new_buffer = buffer.new(rest)
+      let new_buffer = Buffer(rest, 0)
 
       use _ <- try(case field {
         "host" -> {
@@ -285,7 +285,7 @@ fn parse_headers(
     Ok(More(size)) -> {
       let read_size = option.unwrap(size, 0)
 
-      let sized_buffer = buffer.sized(buffer, read_size)
+      let sized_buffer = Buffer(buffer.data, read_size)
 
       use new_buffer <- try(read_from_socket(
         transport:,
@@ -402,7 +402,7 @@ pub fn read_body(
           read_from_socket(
             transport,
             socket,
-            buffer: buffer.sized(req.body.buffer, left),
+            buffer: Buffer(req.body.buffer.data, left),
             on_error: InvalidBody,
           )
           |> result.map(fn(buffer) { buffer.data })
@@ -460,7 +460,7 @@ fn read_chunked_body(
 /// 
 fn parse_body_chunk(buffer: Buffer) -> Result(BodyChunk, ParseError) {
   case split(buffer.data, <<"\r\n">>, []) {
-    [<<"0">>, rest] -> Ok(FinalChunk(buffer.new(rest)))
+    [<<"0">>, rest] -> Ok(FinalChunk(Buffer(rest, 0)))
     [chunk_size, rest] -> {
       use size <- try(
         bit_array.to_string(chunk_size)
@@ -471,7 +471,7 @@ fn parse_body_chunk(buffer: Buffer) -> Result(BodyChunk, ParseError) {
       case split(rest, <<"\r\n">>, []) {
         [chunk, rest] -> {
           case bit_array.byte_size(chunk) == size {
-            True -> Ok(Chunk(chunk, size, buffer.new(rest)))
+            True -> Ok(Chunk(chunk, size, Buffer(rest, 0)))
             False -> Error(InvalidBody)
           }
         }
@@ -515,7 +515,7 @@ fn handle_trailers(
               case bit_array.to_string(value) {
                 Ok(value) -> {
                   request.set_header(req, field_name, value)
-                  |> handle_trailers(set, buffer.new(header_rest))
+                  |> handle_trailers(set, Buffer(header_rest, 0))
                 }
                 Error(Nil) -> handle_trailers(req, set, rest)
               }
@@ -580,7 +580,7 @@ pub fn stream_body(req: Request(Connection)) {
 
   case request.get_header(req, "transfer-encoding") {
     Ok("chunked") -> {
-      let state = ChunkedStreamState(buffer.empty(), req.body.buffer, False)
+      let state = ChunkedStreamState(Buffer(<<>>, 0), req.body.buffer, False)
       Ok(do_stream_body_chunked(req, state))
     }
     _ -> {
@@ -589,8 +589,8 @@ pub fn stream_body(req: Request(Connection)) {
         |> result.try(int.parse)
         |> result.unwrap(0)
 
-      let remaining = content_length - bit_array.byte_size(req.body.buffer.data)
-      let stream_buffer = buffer.sized(req.body.buffer, int.max(0, remaining))
+      let pending = content_length - bit_array.byte_size(req.body.buffer.data)
+      let stream_buffer = Buffer(req.body.buffer.data, int.max(0, pending))
 
       do_stream_body(req, stream_buffer)
       |> Ok
@@ -636,7 +636,7 @@ fn read_from_socket_until(
     // Data buffer contains enough data to consume `until` bytes
     _, size if size >= until -> {
       let #(data, rest) = buffer.split(state.data, until)
-      Ok(#(data, ChunkedStreamState(..state, data: buffer.new(rest))))
+      Ok(#(data, ChunkedStreamState(..state, data: Buffer(rest, 0))))
     }
 
     // Accomplished the reading
@@ -651,7 +651,7 @@ fn read_from_socket_until(
             socket:,
             state: ChunkedStreamState(
               ..state,
-              chunk: buffer.empty(),
+              chunk: Buffer(<<>>, 0),
               done: True,
             ),
             until:,
@@ -671,13 +671,13 @@ fn read_from_socket_until(
             until:,
           )
         }
-        Ok(Chunk(chunk, size, rest)) -> {
+        Ok(Chunk(chunk, _, rest)) -> {
           read_from_socket_until(
             transport:,
             socket:,
             state: ChunkedStreamState(
               ..state,
-              data: buffer.append_size(state.data, chunk, size),
+              data: buffer.append(state.data, chunk),
               chunk: rest,
             ),
             until:,
@@ -699,7 +699,7 @@ fn do_stream_body(
   fn(size: Int) {
     let buffer_size = bit_array.byte_size(buffer.data)
 
-    case buffer.remaining, buffer_size {
+    case buffer.pending, buffer_size {
       // Request body is fully consumed
       0, 0 -> Ok(Done)
 
@@ -707,14 +707,14 @@ fn do_stream_body(
       // in buffer
       0, _ -> {
         let #(data, rest) = buffer.split(buffer, size)
-        Ok(Consumed(data, do_stream_body(req, buffer.new(rest))))
+        Ok(Consumed(data, do_stream_body(req, Buffer(rest, 0))))
       }
 
       // Request body is not fully consumed and there is enough data in buffer 
       // to consume `size` bytes
       _, buffer_size if buffer_size >= size -> {
         let #(data, rest) = buffer.split(buffer, size)
-        let new_buffer = buffer.new_sized(rest, buffer.remaining)
+        let new_buffer = Buffer(rest, buffer.pending)
         Ok(Consumed(data, do_stream_body(req, new_buffer)))
       }
 
@@ -724,18 +724,18 @@ fn do_stream_body(
         use read_buffer <- try(read_from_socket(
           transport: req.body.transport,
           socket: req.body.socket,
-          buffer: buffer.empty(),
+          buffer: Buffer(<<>>, 0),
           on_error: InvalidBody,
         ))
 
         let new_buffer =
-          buffer.new_sized(
+          Buffer(
             <<buffer.data:bits, read_buffer.data:bits>>,
-            int.max(0, buffer.remaining - bit_array.byte_size(read_buffer.data)),
+            int.max(0, buffer.pending - bit_array.byte_size(read_buffer.data)),
           )
 
         let #(data, rest) = buffer.split(new_buffer, size)
-        Ok(Consumed(data, do_stream_body(req, buffer.new(rest))))
+        Ok(Consumed(data, do_stream_body(req, Buffer(rest, 0))))
       }
     }
   }

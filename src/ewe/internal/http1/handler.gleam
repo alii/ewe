@@ -1,5 +1,5 @@
 import compresso
-import ewe/internal/buffer
+import ewe/internal/http1/buffer.{Buffer}
 import ewe/internal/encoder
 import ewe/internal/file
 import ewe/internal/http1.{
@@ -66,7 +66,7 @@ pub fn handle_packet(
     None -> process.TimerNotFound
   }
 
-  case ewe_http.parse_request(connection, buffer.new(data)) {
+  case ewe_http.parse_request(connection, Buffer(data, 0)) {
     Ok(ewe_http.Http1Request(request, version)) -> {
       let call_result =
         call(request, version, glisten_subject, handler, on_crash, idle_timeout)

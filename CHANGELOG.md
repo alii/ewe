@@ -4,6 +4,7 @@
 
 - Gracefully handle HTTP/2 connections: h2c upgrade requests are served as HTTP/1.1, and direct HTTP/2 connections receive a GOAWAY with HTTP_1_1_REQUIRED instead of being silently dropped.
 - Fixed HTTP/2 prior-knowledge detection in ffi
+- Refactored internal buffer module and moved to `http1`
 
 # v3.0.1 - 25.01.2026
 
