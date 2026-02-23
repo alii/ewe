@@ -2,7 +2,6 @@ import ewe/internal/clock
 import gleam/float
 import gleam/int
 import gleam/io
-import gleam/list
 
 pub fn main() {
   let iterations = 10_000_000
@@ -12,9 +11,7 @@ pub fn main() {
   io.println("Getting HTTP date speed test")
 
   let begin = now_microseconds()
-  let _ =
-    list.range(0, iterations)
-    |> list.each(fn(_) { clock.get_http_date() })
+  int.range(0, iterations, "", fn(_, _) { clock.get_http_date() })
   let end = now_microseconds()
 
   let total_duration = end - begin

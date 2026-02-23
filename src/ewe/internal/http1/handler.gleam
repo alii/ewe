@@ -1,11 +1,11 @@
 import compresso
-import ewe/internal/http1/buffer.{Buffer}
 import ewe/internal/encoder
 import ewe/internal/file
 import ewe/internal/http1.{
   type Connection, type HttpVersion, type ResponseBody, BitsData, BytesData,
   Chunked, Empty, File, SSE, StringTreeData, TextData, Websocket,
 } as ewe_http
+import ewe/internal/http1/buffer.{Buffer}
 import exception
 import gleam/bit_array
 import gleam/bytes_tree

@@ -1,10 +1,10 @@
-import ewe/internal/http1/buffer.{type Buffer, Buffer}
 import ewe/internal/clock
 import ewe/internal/decoder.{
   AbsPath, HttpBin, HttpEoh, HttpHeader, HttpRequest, HttphBin, More, Packet,
 }
 import ewe/internal/encoder
 import ewe/internal/file
+import ewe/internal/http1/buffer.{type Buffer, Buffer}
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree.{type BytesTree}
