@@ -7,19 +7,19 @@ import glisten/tcp
 pub fn with_socket(
   port port: Int,
   active active: Bool,
-  callback callback: fn(socket.Socket) -> Nil,
-) {
+  callback callback: fn(socket.Socket) -> a,
+) -> a {
   let assert Ok(socket) =
     tcp_connect(charlist.from_string("localhost"), port, [
       from(atom.create("binary")),
       from(#(atom.create("active"), active)),
     ])
 
-  callback(socket)
+  let result = callback(socket)
 
   let assert Ok(Nil) = tcp.close(socket)
 
-  Nil
+  result
 }
 
 @external(erlang, "gen_tcp", "connect")

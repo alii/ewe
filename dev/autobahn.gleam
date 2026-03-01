@@ -28,7 +28,6 @@ pub fn main() -> Nil {
         on_close: fn(_conn, _state) { Nil },
       )
     })
-    |> ewe.enable_ipv6()
     |> ewe.bind("0.0.0.0")
     |> ewe.listening(port: 8080)
     |> ewe.supervised()

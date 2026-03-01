@@ -1,7 +1,9 @@
+import client/http
 import client/tcp as client
 import gleam/bytes_tree
+import gleam/http/response.{type Response}
 import gleam/list
-import glisten/socket
+import glisten/socket.{type Socket}
 import glisten/tcp
 import server
 
@@ -14,52 +16,32 @@ fn expect_timeout(req: String) -> Nil {
   assert tcp.receive_timeout(socket, 0, 500) == Error(socket.Timeout)
 }
 
-fn run_request(socket: socket.Socket, req: String) -> server.HttpResponse {
+fn run_request(socket: Socket, req: String) -> Response(String) {
   let assert Ok(Nil) = tcp.send(socket, bytes_tree.from_string(req))
 
   let assert Ok(resp) = tcp.receive_timeout(socket, 0, 1000)
-  let assert Ok(resp) = server.parse_http_response(resp)
+  let assert Ok(resp) = http.parse(resp)
 
   resp
 }
 
-fn with_expected_status(
-  resp: server.HttpResponse,
-  status: List(#(Int, Int)),
-) -> Nil {
+pub fn expect_status(req: String, status: List(#(Int, Int))) -> Response(String) {
+  let socket_address = server.start(server.echoer())
+  use socket <- client.with_socket(socket_address.port, active: False)
+
+  let resp = run_request(socket, req)
+
   assert list.fold_until(over: status, from: False, with: fn(_, status) {
       let #(start, end) = status
 
-      case resp.status_code {
+      case resp.status {
         status if status >= start && status <= end -> list.Stop(True)
         _ -> list.Continue(False)
       }
     })
     == True
-}
 
-pub fn expect_status(req: String, status: List(#(Int, Int))) {
-  let socket_address = server.start(server.echoer())
-  use socket <- client.with_socket(socket_address.port, active: False)
-
-  let resp = run_request(socket, req)
-  with_expected_status(resp, status)
-
-  Nil
-}
-
-pub fn expect_status_with_body(
-  req: String,
-  status: List(#(Int, Int)),
-  expected_body: String,
-) {
-  let socket_address = server.start(server.echoer())
-  use socket <- client.with_socket(socket_address.port, active: False)
-
-  let resp = run_request(socket, req)
-  with_expected_status(resp, status)
-
-  assert resp.body == expected_body
+  resp
 }
 
 pub fn fragmented_method_test() {
@@ -218,25 +200,31 @@ pub fn invalid_line_ending_test() {
 }
 
 pub fn valid_post_request_with_body_test() {
-  expect_status_with_body(
-    "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nhello",
-    [#(200, 299)],
-    "hello",
-  )
+  let resp =
+    expect_status(
+      "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nhello",
+      [#(200, 299)],
+    )
+
+  assert resp.body == "hello"
 }
 
 pub fn chunked_transfer_encoding_test() {
-  expect_status_with_body(
-    "POST / HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\nc\r\nHellO world1\r\n0\r\n\r\n",
-    [#(200, 299)],
-    "HellO world1",
-  )
+  let resp =
+    expect_status(
+      "POST / HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\nc\r\nHellO world1\r\n0\r\n\r\n",
+      [#(200, 299)],
+    )
+
+  assert resp.body == "HellO world1"
 }
 
 pub fn conflicting_transfer_encoding_and_content_length_test() {
-  expect_status_with_body(
-    "POST / HTTP/1.1\r\nHost: example.com\r\ncontent-LengtH: 5\r\nTransFer-Encoding: chunked\r\n\r\nc\r\nHellO world1\r\n0\r\n\r\n",
-    [#(400, 499), #(200, 299)],
-    "HellO world1",
-  )
+  let resp =
+    expect_status(
+      "POST / HTTP/1.1\r\nHost: example.com\r\ncontent-LengtH: 5\r\nTransFer-Encoding: chunked\r\n\r\nc\r\nHellO world1\r\n0\r\n\r\n",
+      [#(400, 499), #(200, 299)],
+    )
+
+  assert resp.body == "HellO world1"
 }
