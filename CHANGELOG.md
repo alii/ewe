@@ -1,6 +1,6 @@
 # Changelog
 
-# Unreleased
+# v3.0.3 - 13.03.2026
 
 - Update glisten to next major release.
 - Default `on_start` handler now uses `io.println` in addition to logging, so the startup message is visible even without a logger configured.
