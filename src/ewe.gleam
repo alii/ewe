@@ -528,6 +528,7 @@ pub fn start(
   let glisten_child = supervision.supervisor(fn() { glisten_supervisor })
 
   supervisor.new(supervisor.OneForAll)
+  |> supervisor.restart_tolerance(intensity: 10, period: 30)
   |> supervisor.add(glisten_child)
   |> supervisor.add(factory_child)
   |> supervisor.start()
