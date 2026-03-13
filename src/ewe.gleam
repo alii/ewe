@@ -149,6 +149,7 @@ import gleam/http
 import gleam/http/request.{type Request as HttpRequest}
 import gleam/http/response.{type Response as HttpResponse}
 import gleam/int
+import gleam/io
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/otp/factory_supervisor as factory
@@ -160,7 +161,6 @@ import glisten
 import glisten/internal/listener
 import glisten/socket/options as glisten_options
 import glisten/transport
-import logging
 import websocks
 
 // CONNECTION
@@ -390,7 +390,7 @@ pub fn new(handler: fn(Request) -> Response) -> Builder {
         <> ":"
         <> int.to_string(server.port)
 
-      logging.log(logging.Info, "Listening on " <> url)
+      io.println("Listening on " <> url)
     },
     on_crash: response.new(500) |> response.set_body(Empty),
     listener_name: process.new_name("glisten_listener"),
@@ -508,8 +508,8 @@ pub fn start(
         None -> glisten_builder
       }
     }
-    // https://github.com/rawhat/glisten/blob/master/src/glisten.gleam#L359
-    |> glisten.start_with_listener_name(builder.port, builder.listener_name)
+    |> glisten.with_listener_name(builder.listener_name)
+    |> glisten.start(builder.port)
     |> result.map(fn(started) {
       let scheme = case builder.tls {
         Some(#(_, _)) -> http.Https

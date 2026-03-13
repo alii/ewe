@@ -1,5 +1,10 @@
 # Changelog
 
+# Unreleased
+
+- Update glisten to next major release.
+- Default `on_start` handler now uses `io.println` in addition to logging, so the startup message is visible even without a logger configured.
+
 # v3.0.2 - 23.02.2026
 
 - Gracefully handle HTTP/2 connections: h2c upgrade requests are served as HTTP/1.1, and direct HTTP/2 connections receive a GOAWAY with HTTP_1_1_REQUIRED instead of being silently dropped.
