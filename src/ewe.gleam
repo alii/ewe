@@ -488,7 +488,7 @@ pub fn start(
     |> factory.named(factory_name)
     |> factory.supervised()
 
-  let glisten_supervisor =
+  let glisten =
     glisten.new(
       handler.init,
       handler.loop(handler, on_crash, factory_name, builder.idle_timeout),
@@ -509,29 +509,24 @@ pub fn start(
       }
     }
     |> glisten.with_listener_name(builder.listener_name)
-    |> glisten.start(builder.port)
-    |> result.map(fn(started) {
-      let scheme = case builder.tls {
-        Some(#(_, _)) -> http.Https
-        None -> http.Http
-      }
-
-      let server_info = glisten.get_server_info(builder.listener_name, 10_000)
-      let ip_address = glisten_to_ewe_ip(server_info.ip_address)
-
-      let server = SocketAddress(ip: ip_address, port: server_info.port)
-
-      builder.on_start(scheme, server)
-
-      started
-    })
-  let glisten_child = supervision.supervisor(fn() { glisten_supervisor })
+    |> glisten.supervised(builder.port)
 
   supervisor.new(supervisor.OneForAll)
   |> supervisor.restart_tolerance(intensity: 10, period: 30)
   |> supervisor.add(factory_child)
-  |> supervisor.add(glisten_child)
+  |> supervisor.add(glisten)
   |> supervisor.start()
+  |> result.map(fn(started) {
+    let scheme = case builder.tls {
+      Some(#(_, _)) -> http.Https
+      None -> http.Http
+    }
+    let server_info = glisten.get_server_info(builder.listener_name, 10_000)
+    let ip_address = glisten_to_ewe_ip(server_info.ip_address)
+    let server = SocketAddress(ip: ip_address, port: server_info.port)
+    builder.on_start(scheme, server)
+    started
+  })
 }
 
 /// Returns a child specification for use in a supervision tree.
