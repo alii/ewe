@@ -1,5 +1,9 @@
 # Changelog
 
+# v3.0.4 - 13.03.2026
+
+- Fix glisten being incorrectly supervised on start.
+
 # v3.0.3 - 13.03.2026
 
 - Update glisten to next major release.
