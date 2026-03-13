@@ -529,8 +529,8 @@ pub fn start(
 
   supervisor.new(supervisor.OneForAll)
   |> supervisor.restart_tolerance(intensity: 10, period: 30)
-  |> supervisor.add(glisten_child)
   |> supervisor.add(factory_child)
+  |> supervisor.add(glisten_child)
   |> supervisor.start()
 }
 
